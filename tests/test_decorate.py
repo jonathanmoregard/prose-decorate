@@ -192,3 +192,38 @@ def test_prompt_template_hash_is_stable():
     h2 = prompt_template_hash()
     assert h1 == h2
     assert len(h1) == 64
+
+
+def test_validate_tolerates_dedup_of_doubled_line():
+    """When the input had a duplicated title (substack-url-tool v0.1 bug)
+    and the LLM helpfully drops the duplicate, the word-level guard
+    sees the same words on both sides minus the title's words once.
+    That IS a drift (words removed), and we want to catch it — but
+    the symmetric case where the LLM ADDS words is what matters most.
+    Just sanity-check that pure-passthrough (no edits) accepts."""
+    text = "A title here.\n\nA title here.\n\nBody."
+    ok, _ = _validate(text, text)
+    assert ok
+
+
+def test_validate_tolerates_run_together_sentence_split():
+    """Claude often inserts a space between run-together sentences
+    (`true.Source:` -> `true. Source:`). Word stream is identical;
+    only whitespace differs. Word-level guard must accept."""
+    ok, _ = _validate(
+        "One belief: too good to be true.Source: page 31.",
+        "One belief: too good to be true. Source: page 31.",
+    )
+    assert ok
+
+
+def test_validate_tolerates_case_change_at_sentence_boundary():
+    """At sentence wrap the LLM may re-cap. Word-stream casefolds."""
+    ok, _ = _validate("hello world.", "Hello world.")
+    assert ok
+
+
+def test_validate_catches_real_word_substitution():
+    ok, reason = _validate("Hello world.", "Hello cruel world.")
+    assert not ok
+    assert "drift" in reason

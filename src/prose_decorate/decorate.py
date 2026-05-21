@@ -12,15 +12,43 @@ Safety guards (per v3 spec):
 """
 from __future__ import annotations
 
+import difflib
 import hashlib
 import os
+import re
 import secrets
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from .markdown_strip import normalize_whitespace, strip_tags
+from .markdown_strip import _fold_typography, strip_tags
+
+
+# Word = run of alphanumeric chars, case-folded for tolerance against
+# stylistic capitalization (e.g. "the" vs "The" at sentence boundaries
+# the LLM may rewrap). Apostrophes inside contractions are part of the
+# token — `don't` is one word, not "don" + "t".
+_WORD_RE = re.compile(r"[\w']+", re.UNICODE)
+
+
+def _word_tokens(text: str) -> list[str]:
+    return _WORD_RE.findall(_fold_typography(text).casefold())
+
+
+def _word_drift_summary(expected: list[str], actual: list[str]) -> str:
+    """Compact summary of how the word streams differ — enough to
+    diagnose from a stderr line without spamming the journal."""
+    delta = list(difflib.ndiff(expected, actual))
+    removed = [d[2:] for d in delta if d.startswith("- ")]
+    added = [d[2:] for d in delta if d.startswith("+ ")]
+    n_exp, n_act = len(expected), len(actual)
+    parts = [f"expected={n_exp} actual={n_act}"]
+    if removed:
+        parts.append(f"missing={removed[:5]!r}{'...' if len(removed) > 5 else ''}")
+    if added:
+        parts.append(f"added={added[:5]!r}{'...' if len(added) > 5 else ''}")
+    return " ".join(parts)
 
 # Cache-invalidating constants. Bump anything here when changing the
 # Anthropic SDK floor or the API-version header the client sends.
@@ -177,11 +205,23 @@ class NonceCollision(RuntimeError):
 
 
 def _validate(input_text: str, output_text: str) -> tuple[bool, str]:
-    """Apply safety guards from the v3 spec. Returns (ok, reason)."""
-    expected = normalize_whitespace(input_text)
-    actual = normalize_whitespace(strip_tags(output_text))
-    if expected != actual:
-        return False, "prose drift: stripped output != normalized input"
+    """Apply safety guards from the v3 spec. Returns (ok, reason).
+
+    The drift check compares at the WORD level, not char level. The
+    system prompt's contract is "preserve every word verbatim, insert
+    tags only" — char-level equality false-positives on every minor
+    reasonable rewrite the LLM does (smart-quote folding, markdown-
+    emphasis drop, dedup-of-doubled-title-line, space inserted between
+    run-together-sentences). Sonnet at temperature=0 still does these.
+    Comparing as a sequence of word tokens (alphanumeric runs) catches
+    actual prose drift (added/dropped/changed words) and tolerates the
+    rest.
+    """
+    expected_words = _word_tokens(input_text)
+    actual_words = _word_tokens(strip_tags(output_text))
+    if expected_words != actual_words:
+        diff = _word_drift_summary(expected_words, actual_words)
+        return False, f"prose drift at word level: {diff}"
 
     # Tag-overhead budget: 50% of input chars or 200 chars, whichever is
     # larger. The floor protects tiny inputs ("Hello world." is 12 chars
