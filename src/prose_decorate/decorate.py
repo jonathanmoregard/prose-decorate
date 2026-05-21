@@ -74,6 +74,9 @@ _TONE_OPENERS = frozenset({
 # `[the narrator's tone shifts]` is NOT misclassified as a closer
 # (round-2 advisor M1). Each entry below is a multi-word phrase that
 # only makes sense as "voice returns to default".
+#
+# Entries MUST be lowercase — they're matched against a casefolded
+# body, so any mixed-case literal here would silently never match.
 _TONE_CLOSER_SUBSTRINGS = (
     "back to narration",
     "back to the narrator",
