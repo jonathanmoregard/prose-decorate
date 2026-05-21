@@ -68,12 +68,19 @@ _TONE_OPENERS = frozenset({
     "matter-of-factly",
 })
 
-# Closer detection is substring-based (per advisor M2) so minor
-# phrasing variants Sonnet emits like "back to the narrator" or
-# "resuming narration" still count as a close. Cheap, forgiving.
+# Closer detection is substring-based so minor phrasing variants Sonnet
+# emits still count as a close. Phrases are anchored on the *return-to-
+# narration* intent so a descriptive tag like `[narrator pauses]` or
+# `[the narrator's tone shifts]` is NOT misclassified as a closer
+# (round-2 advisor M1). Each entry below is a multi-word phrase that
+# only makes sense as "voice returns to default".
 _TONE_CLOSER_SUBSTRINGS = (
-    "narration",
-    "narrator",
+    "back to narration",
+    "back to the narrator",
+    "back to the narrator's voice",
+    "narrator's voice",
+    "narrator returns",
+    "resuming narration",
     "default voice",
     "regular voice",
     "normal voice",
@@ -106,6 +113,10 @@ def _check_tone_pairing(
     open_tone: str | None = None
     for m in _TAG_EXTRACT_RE.finditer(output_text):
         body = m.group(1).strip().casefold()
+        if not body:
+            # `[ ]` / `[   ]` shapes — Fish s2-pro would render the
+            # brackets literally in audio. Round-2 advisor M2.
+            return False, "empty tag body in output"
         kind = _classify_tag(body)
         if kind == "opener":
             open_tone = body  # implicit close-then-open per advisor H2

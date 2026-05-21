@@ -322,3 +322,40 @@ def test_tone_pairing_case_insensitive_and_whitespace_tolerant():
         strict_tones=True,
     )
     assert ok
+
+
+def test_tone_pairing_rejects_empty_body_tag():
+    """Round-2 M2: `[ ]` would render as literal brackets in audio."""
+    ok, reason = _validate("Hello.", "Hello [ ] world." if False else "Hello [ ] there.", strict_tones=True)
+    # Word stream of "Hello [ ] there." vs input "Hello." differs in
+    # word count. Test goes through tone-pairing first (validate order)
+    # and rejects on empty body. Use input that has matching word stream:
+    ok, reason = _validate("Hello.", "Hello[ ].", strict_tones=True)
+    assert not ok
+    assert "empty" in reason
+
+
+def test_tone_pairing_descriptive_narrator_tag_not_closer():
+    """Round-2 M1: tighter closer phrases. Free-form `[narrator pauses]`
+    isn't a closer; it's descriptive, treated as transient."""
+    ok, reason = _validate(
+        "Body.\n\nFinal.",
+        "Body. [reading aloud] Final. [narrator pauses]",
+        strict_tones=True,
+    )
+    # `[narrator pauses]` doesn't match the closer phrase list, so
+    # `[reading aloud]` remains unclosed -> reject.
+    assert not ok
+    assert "unclosed" in reason
+
+
+def test_tone_pairing_chunk_boundary_synthetic_regression():
+    """Round-2 L2: stress the chunk-boundary path explicitly."""
+    chunk = "Body.\n\n> The quote begins and continues into the next chunk."
+    # Input ends in a blockquote — unclosed opener allowed.
+    ok, _ = _validate(
+        chunk,
+        "Body. [reading aloud] The quote begins and continues into the next chunk.",
+        strict_tones=True,
+    )
+    assert ok
