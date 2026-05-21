@@ -41,6 +41,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--debug", type=Path, default=None, metavar="DIR",
                    help="Write per-chunk {input,output,status,reason} JSON "
                         "sidecars to DIR for introspection.")
+    p.add_argument("--strict-tones", action="store_true",
+                   help="Reject chunks whose tonal voice tags (`[reading aloud]`, "
+                        "`[thoughtfully]`, etc.) aren't closed with a "
+                        "`[back to narration]` (or substring variant) by "
+                        "chunk-end. Fails -> passthrough that chunk. Off by "
+                        "default while passthrough rate is being measured.")
     return p
 
 
@@ -94,6 +100,7 @@ def _process(
     *,
     no_cache: bool,
     no_llm: bool,
+    strict_tones: bool,
     debug_dir: Path | None,
 ) -> tuple[list[str], int, int]:
     """Returns (output_pieces, decorated_count, passthrough_count)."""
@@ -151,6 +158,7 @@ def _process(
         result = decorate.decorate_chunk(
             client, c.text,
             prev_context=c.prev_context, model=model,
+            strict_tones=strict_tones,
         )
         if result.ok:
             decorated += 1
@@ -188,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
         chunks,
         no_cache=args.no_cache,
         no_llm=args.no_llm,
+        strict_tones=args.strict_tones,
         debug_dir=args.debug,
     )
 
@@ -196,6 +205,14 @@ def main(argv: list[str] | None = None) -> int:
 
     _log(f"done. {len(chunks)} chunks ({decorated} decorated, "
          f"{passthrough} passthrough).")
+    # Structured stats line for measuring passthrough rate over time
+    # (advisor M3). Easy to grep / aggregate later.
+    pt_pct = (100 * passthrough / len(chunks)) if chunks else 0
+    _log(
+        f"stats: chunks={len(chunks)} decorated={decorated} "
+        f"passthrough={passthrough} passthrough_pct={pt_pct:.0f} "
+        f"strict_tones={int(args.strict_tones)}"
+    )
 
     if decorated == 0 and passthrough > 0:
         return EXIT_FULL_PASSTHROUGH

@@ -8,7 +8,7 @@ from prose_decorate.markdown_strip import (
 def test_strip_fenced_code_block():
     md = "Para one.\n\n```python\nprint('hello')\n```\n\nPara two."
     out = strip_markdown(md)
-    assert "[code omitted]" in out
+    assert "(code block omitted)" in out
     assert "print('hello')" not in out
     assert "Para one." in out
     assert "Para two." in out
@@ -18,7 +18,7 @@ def test_strip_inline_code_to_token():
     md = "Use `kubectl get pods` to inspect."
     out = strip_markdown(md)
     assert "`" not in out
-    assert "[code]" in out
+    assert "(some code)" in out
 
 
 def test_strip_image_to_alt_text():
@@ -26,7 +26,6 @@ def test_strip_image_to_alt_text():
     out = strip_markdown(md)
     assert "A blue cat" in out
     assert "example.com" not in out
-    assert "!" not in out or "[code]" not in out  # no leftover image syntax
 
 
 def test_strip_link_to_text():
@@ -53,7 +52,7 @@ def test_strip_table_to_token():
         "Body after."
     )
     out = strip_markdown(md)
-    assert "[table omitted]" in out
+    assert "(table omitted)" in out
     assert "col1" not in out
     assert "a    | b" not in out
     assert "Body before." in out
@@ -138,9 +137,9 @@ def test_strip_tags_idempotent_on_untagged():
     assert strip_tags(plain) == plain
 
 
-def test_strip_tags_removes_code_token():
-    decorated = "Use [code] to inspect."
-    assert strip_tags(decorated) == "Use  to inspect."
+def test_strip_tags_removes_fish_emotion_token():
+    decorated = "Use [thoughtfully] this approach."
+    assert strip_tags(decorated) == "Use  this approach."
 
 
 def test_normalize_folds_smart_quotes_to_ascii():
@@ -174,7 +173,7 @@ def test_strip_bare_http_url():
     out = strip_markdown(md)
     assert "https" not in out
     assert "example.com" not in out
-    assert "[link]" in out
+    assert "(a link)" in out
     assert "See" in out and "for details" in out
 
 
@@ -194,5 +193,7 @@ def test_strip_preserves_inline_url_in_markdown_link():
     assert "https" not in out
     assert "example.com" not in out
     assert "the docs" in out
-    # `[link]` token should NOT appear since the rewrite already handled it
-    assert "[link]" not in out
+    # `(a link)` placeholder should NOT appear — the markdown-link
+    # rewrite already extracted the text, so the bare-URL pass sees
+    # nothing left to substitute.
+    assert "(a link)" not in out

@@ -227,3 +227,98 @@ def test_validate_catches_real_word_substitution():
     ok, reason = _validate("Hello world.", "Hello cruel world.")
     assert not ok
     assert "drift" in reason
+
+
+# ---------- tone-pairing guard (--strict-tones) ----------
+
+def test_tone_pairing_accepts_opener_with_close():
+    ok, _ = _validate(
+        "Body.\n\n> Quoted line.",
+        "Body. [reading aloud] Quoted line. [back to narration]",
+        strict_tones=True,
+    )
+    assert ok
+
+
+def test_tone_pairing_rejects_unclosed_opener():
+    ok, reason = _validate(
+        "Body.\n\nFinal paragraph.",
+        "Body. [reading aloud] Final paragraph.",
+        strict_tones=True,
+    )
+    assert not ok
+    assert "unclosed" in reason
+
+
+def test_tone_pairing_accepts_stacked_opener_as_auto_close():
+    """S2-Pro semantics: a new opener overrides the previous (advisor H2)."""
+    ok, _ = _validate(
+        "Body.\n\nQuote a.\n\n> Quote b.",
+        "Body. [reading aloud] Quote a. [thoughtfully] Quote b. [back to narration]",
+        strict_tones=True,
+    )
+    assert ok
+
+
+def test_tone_pairing_rejects_stray_closer():
+    ok, reason = _validate(
+        "Hello world.",
+        "Hello [back to narration] world.",
+        strict_tones=True,
+    )
+    assert not ok
+    assert "stray" in reason or "no opener" in reason
+
+
+def test_tone_pairing_transient_doesnt_count_as_opener():
+    """Per prompt's `Tonal voice tags vs transient cues` section,
+    only the closed _TONE_OPENERS set is treated as persistent. Free-
+    form adverbial cues like `[after a moment]` are transient."""
+    ok, _ = _validate(
+        "First sentence.\n\nSecond sentence.",
+        "First sentence. [after a moment] Second sentence.",
+        strict_tones=True,
+    )
+    assert ok
+
+
+def test_tone_pairing_closer_substring_match():
+    """Advisor M2: accept minor closer variants via substring."""
+    ok, _ = _validate(
+        "Body.\n\n> Quote.",
+        "Body. [reading aloud] Quote. [narrator returns]",
+        strict_tones=True,
+    )
+    assert ok
+
+
+def test_tone_pairing_allows_unclosed_if_input_ends_in_blockquote():
+    """Advisor M1: when the chunk's input itself ends mid-quote, an
+    unclosed tone at chunk-end is legitimate — the NEXT chunk continues
+    the quote and emits the closer when the quote actually ends."""
+    ok, _ = _validate(
+        "Body.\n\n> Quoted line that spans into next chunk.",
+        "Body. [reading aloud] Quoted line that spans into next chunk.",
+        strict_tones=True,
+    )
+    assert ok
+
+
+def test_tone_pairing_strict_mode_off_by_default():
+    """Default behavior: tone-pairing not enforced; word-drift still is."""
+    ok, _ = _validate(
+        "Body.\n\nFinal.",
+        "Body. [reading aloud] Final.",
+        # strict_tones defaults to False
+    )
+    assert ok
+
+
+def test_tone_pairing_case_insensitive_and_whitespace_tolerant():
+    """Advisor L3: `.strip().casefold()` before matching."""
+    ok, _ = _validate(
+        "Body.\n\n> Quote.",
+        "Body. [ Reading Aloud ] Quote. [ Back to Narration ]",
+        strict_tones=True,
+    )
+    assert ok

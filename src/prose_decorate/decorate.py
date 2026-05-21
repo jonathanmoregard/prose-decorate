@@ -50,6 +50,85 @@ def _word_drift_summary(expected: list[str], actual: list[str]) -> str:
         parts.append(f"added={added[:5]!r}{'...' if len(added) > 5 else ''}")
     return " ".join(parts)
 
+
+# Tonal voice tags PERSIST forward in S2-Pro. The prompt restricts the
+# LLM to a closed set of openers so the validator can enforce close-
+# tag pairing without false-positiving on transient adverbial cues
+# (e.g. `[after a moment]`, `[briefly]`) that AREN'T persistent voice
+# switches. Keep this set in sync with the "Tonal voice tags" section
+# of _PROMPT_TEMPLATE.
+_TONE_OPENERS = frozenset({
+    "reading aloud",
+    "thoughtfully",
+    "softly",
+    "firmly",
+    "warmly",
+    "drily",
+    "reflectively",
+    "matter-of-factly",
+})
+
+# Closer detection is substring-based (per advisor M2) so minor
+# phrasing variants Sonnet emits like "back to the narrator" or
+# "resuming narration" still count as a close. Cheap, forgiving.
+_TONE_CLOSER_SUBSTRINGS = (
+    "narration",
+    "narrator",
+    "default voice",
+    "regular voice",
+    "normal voice",
+)
+
+_TAG_EXTRACT_RE = re.compile(r"\[([^\[\]\n]+)\]")
+
+
+def _classify_tag(tag_body: str) -> str:
+    """Return 'opener', 'closer', or 'transient'. Body is the tag's
+    INNER text, stripped + casefolded by caller."""
+    if any(sub in tag_body for sub in _TONE_CLOSER_SUBSTRINGS):
+        return "closer"
+    if tag_body in _TONE_OPENERS:
+        return "opener"
+    return "transient"
+
+
+def _check_tone_pairing(
+    output_text: str,
+    *,
+    input_ends_in_blockquote: bool,
+) -> tuple[bool, str]:
+    """Walk tags in order; auto-close on stacked openers (S2-Pro semantics:
+    a new opener overrides the previous one). At chunk end, require any
+    open tone be closed UNLESS the input itself ends inside a blockquote
+    (legitimate chunk-split mid-quote; the next chunk will continue the
+    tonal voice and emit the closer when the quote actually ends).
+    """
+    open_tone: str | None = None
+    for m in _TAG_EXTRACT_RE.finditer(output_text):
+        body = m.group(1).strip().casefold()
+        kind = _classify_tag(body)
+        if kind == "opener":
+            open_tone = body  # implicit close-then-open per advisor H2
+        elif kind == "closer":
+            if open_tone is None:
+                return False, f"stray tone-closer `[{body}]` with no opener"
+            open_tone = None
+        # transient: ignore
+    if open_tone is not None and not input_ends_in_blockquote:
+        return False, f"unclosed tone `[{open_tone}]` at end of chunk"
+    return True, ""
+
+
+def _input_ends_in_blockquote(text: str) -> bool:
+    """True if the last non-blank line of the chunk's input is a
+    Markdown blockquote (`>` prefix). Used by `_check_tone_pairing` to
+    allow legitimate chunk-split-mid-quote without false-positive on
+    unclosed tone."""
+    for line in reversed(text.split("\n")):
+        if line.strip():
+            return line.lstrip().startswith(">")
+    return False
+
 # Cache-invalidating constants. Bump anything here when changing the
 # Anthropic SDK floor or the API-version header the client sends.
 DEFAULT_MODEL = "claude-sonnet-4-6"
@@ -81,15 +160,33 @@ in brackets works (e.g. `[after a moment of hesitation]`). Prefer the
 short standard tags listed above unless the prose is doing something
 unusual.
 
-## Tone reset (IMPORTANT)
+## Tonal voice tags vs transient cues (IMPORTANT)
 
-S2-Pro tone tags PERSIST forward — `[reading aloud]` keeps the quoted-
-voice rendering active for everything that follows until another tone
-tag overrides it. You MUST emit a closing tone-reset tag at the end of
-any quoted/blockquote/tone-shifted region so the narrator returns to
-its default cadence. Use `[back to narration]` (preferred) or
-`[narrator's voice]`. The reset goes immediately AFTER the last word
-of the quoted span, BEFORE the next paragraph break.
+S2-Pro tonal voice tags PERSIST forward — `[reading aloud]` keeps the
+quoted-voice rendering active for everything that follows until
+another tone tag overrides it. The ONLY tonal voice openers you may
+use are this CLOSED SET:
+
+    [reading aloud]
+    [thoughtfully]
+    [softly]
+    [firmly]
+    [warmly]
+    [drily]
+    [reflectively]
+    [matter-of-factly]
+
+Each one you open MUST be closed before chunk-end. Use exactly:
+    [back to narration]
+
+The reset goes immediately AFTER the last word of the tonally-shifted
+span, BEFORE the next paragraph break.
+
+If you need to express a TRANSIENT delivery cue (e.g. a single beat
+of hesitation, an aside), use natural-language brackets that DON'T
+match the closed set above — e.g. `[after a moment]`, `[briefly]`,
+`[as an aside]`. These are read as transient inflections, not
+persistent voice switches, and don't need a close-tag.
 
 ## Rules
 
@@ -218,7 +315,12 @@ class NonceCollision(RuntimeError):
     pass
 
 
-def _validate(input_text: str, output_text: str) -> tuple[bool, str]:
+def _validate(
+    input_text: str,
+    output_text: str,
+    *,
+    strict_tones: bool = False,
+) -> tuple[bool, str]:
     """Apply safety guards from the v3 spec. Returns (ok, reason).
 
     The drift check compares at the WORD level, not char level. The
@@ -230,7 +332,20 @@ def _validate(input_text: str, output_text: str) -> tuple[bool, str]:
     Comparing as a sequence of word tokens (alphanumeric runs) catches
     actual prose drift (added/dropped/changed words) and tolerates the
     rest.
+
+    `strict_tones=True` adds the tone-pairing check: every opener from
+    the closed set in `_TONE_OPENERS` must be closed by chunk-end
+    (substring match against `_TONE_CLOSER_SUBSTRINGS`). Ships
+    opt-in so the failure rate can be measured before flipping default
+    (per advisor M3).
     """
+    if strict_tones:
+        ok, reason = _check_tone_pairing(
+            output_text,
+            input_ends_in_blockquote=_input_ends_in_blockquote(input_text),
+        )
+        if not ok:
+            return False, reason
     expected_words = _word_tokens(input_text)
     actual_words = _word_tokens(strip_tags(output_text))
     if expected_words != actual_words:
@@ -276,6 +391,7 @@ def decorate_chunk(
     model: str = DEFAULT_MODEL,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     max_retries: int = 3,
+    strict_tones: bool = False,
     sleep: Callable[[float], None] = time.sleep,
 ) -> DecorateResult:
     """Decorate one chunk. On any failure path returns a passthrough
@@ -326,7 +442,7 @@ def decorate_chunk(
             last_err = RuntimeError("empty response")
             continue
 
-        ok, reason = _validate(chunk_text, output)
+        ok, reason = _validate(chunk_text, output, strict_tones=strict_tones)
         if ok:
             return DecorateResult(text=output, status=DecorateStatus.DECORATED)
         last_err = RuntimeError(reason)

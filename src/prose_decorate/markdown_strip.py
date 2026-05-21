@@ -53,9 +53,16 @@ def strip_markdown(text: str) -> str:
     """Apply the v0.1 markdown handling matrix. Returns plain prose
     suitable for chunking + LLM decoration. Idempotent on already-plain
     text (no markdown -> no change beyond whitespace normalization)."""
-    # Fenced code blocks -> [code omitted] line. Process before inline-code
-    # regex so triple-backtick content can't be mis-matched as inline.
-    text = _FENCED_CODE.sub("[code omitted]", text)
+    # Placeholders for non-prose elements use PLAIN PROSE words, not
+    # bracket-shaped tokens. The drift guard's strip_tags() pass removes
+    # ALL `[...]` content, so a bracket placeholder in the input would
+    # be present on the input side and stripped from the output side,
+    # falsely triggering the word-drift check. Plain words pass through
+    # both sides identically.
+
+    # Fenced code blocks -> "(code block omitted)". Process before inline
+    # so triple-backtick content can't be mis-matched as inline.
+    text = _FENCED_CODE.sub("(code block omitted)", text)
     # Images: keep alt text only (often more useful than dropping silently;
     # alt of "" yields "" which collapses harmlessly via blank-line dedup).
     text = _IMAGE.sub(r"\1", text)
@@ -66,9 +73,12 @@ def strip_markdown(text: str) -> str:
     text = _REFERENCE_LINK_DEF.sub("", text)
     # Bare URLs in prose -> speakable token. Done AFTER markdown-link
     # rewrites so a `[text](url)` pair has already lost its URL by now.
-    text = _BARE_URL.sub("[link]", text)
-    # Inline code -> [code] token (TTS would otherwise read literal punct).
-    text = _INLINE_CODE.sub("[code]", text)
+    text = _BARE_URL.sub("(a link)", text)
+    # Inline code -> "(some code)". Keeps a speakable placeholder without
+    # using bracket syntax that the drift guard would strip differently
+    # from each side. Lossy (we lose the identifier text), but the user
+    # gets a clean audio aside instead of "back-tick k u b e c t l back-tick".
+    text = _INLINE_CODE.sub("(some code)", text)
     # Tables -> single [table omitted] line per table-run. Strategy:
     # walk lines, replace runs of table-shaped lines with one token.
     text = _strip_tables(text)
@@ -98,7 +108,7 @@ def _strip_tables(text: str) -> str:
         is_table = bool(_TABLE_LINE.match(line) or _TABLE_ALIGN.match(line))
         if is_table:
             if not in_table:
-                out.append("[table omitted]")
+                out.append("(table omitted)")
                 in_table = True
             continue
         in_table = False
