@@ -95,24 +95,69 @@ def _strip_tables(text: str) -> str:
     return "\n".join(out)
 
 
+# Smart-quote / dash → ASCII fold. Sonnet at temperature=0 still
+# normalizes typography in its output (curly apostrophes -> straight,
+# en/em dashes -> hyphens occasionally), so the drift guard has to
+# fold input the same way to compare apples-to-apples.
+_SMART_FOLD = {
+    "\u2018": "'", "\u2019": "'",   # ‘ ’
+    "\u201c": '"', "\u201d": '"',   # “ ”
+    "\u2013": "-", "\u2014": "-",   # – —
+    "\u2026": "...",                 # …
+    "\u00a0": " ",                   # non-breaking space
+}
+
+# Markdown emphasis markers that the LLM is INSTRUCTED to drop from
+# output (the system prompt tells it to decide whether to tag bold/
+# italic, then drop the syntax). The drift guard must therefore strip
+# them from BOTH sides of the equality check.
+#
+# Broad pattern: strip ALL `*` and `_` runs. This deliberately also
+# nukes underscores in identifiers and literal asterisks — that's
+# safe for COMPARISON purposes because both sides are stripped the
+# same way; the drift guard only needs to detect WORD changes, not
+# punctuation/syntax differences. A previous narrow regex required
+# word-char adjacency on at least one side, which missed asymmetric
+# emphasis like `*Summary:*` (trailing `*` preceded by `:`, not by a
+# word char) — caught when a real article tripped it (2026-05-21).
+_EMPHASIS_RE = re.compile(r"[*_]+")
+
+
+def _fold_typography(text: str) -> str:
+    for src, dst in _SMART_FOLD.items():
+        text = text.replace(src, dst)
+    return text
+
+
 def normalize_whitespace(text: str) -> str:
     """Canonical form for the strip_tags(output) == normalize_whitespace(input)
-    safety check in decorate.py. Defined narrowly:
+    safety check in decorate.py.
 
+    Whitespace:
     - collapse `[ \\t]+` runs to single space
+    - strip leading AND trailing whitespace per line (so a stray
+      leading space the model emitted on a quote line is tolerated)
     - collapse SINGLE newlines (soft line breaks) to single space —
       Markdown soft-wrap semantics + Sonnet's tendency to join them
       mean strict newline preservation would false-positive the drift
       guard on every chunk
     - preserve `\\n\\n` as paragraph boundary
-    - strip trailing whitespace per line
     - trim outer whitespace
 
-    Explicit non-changes: NO case change, NO Unicode NFC, NO punctuation
-    strip.
+    Typography (added 2026-05-21 after a real article tripped the
+    guard on curly apostrophes):
+    - fold smart quotes / em-dash / ellipsis to ASCII equivalents
+    - strip markdown emphasis runs (`*` / `_`) adjacent to word chars
+
+    Explicit non-changes: NO case change, NO Unicode NFC across the
+    whole string, NO general punctuation strip — the guard is meant to
+    catch the LLM CHANGING WORDS, not stylistic typography that the
+    system prompt explicitly invites it to normalize.
     """
+    text = _fold_typography(text)
+    text = _EMPHASIS_RE.sub("", text)
     text = re.sub(r"[ \t]+", " ", text)
-    lines = [ln.rstrip() for ln in text.split("\n")]
+    lines = [ln.strip() for ln in text.split("\n")]
     text = "\n".join(lines)
     # Collapse 3+ newlines to 2 (paragraph boundary) FIRST so we can
     # then collapse remaining single newlines without touching the

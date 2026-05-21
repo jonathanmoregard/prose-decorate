@@ -141,3 +141,29 @@ def test_strip_tags_idempotent_on_untagged():
 def test_strip_tags_removes_code_token():
     decorated = "Use [code] to inspect."
     assert strip_tags(decorated) == "Use  to inspect."
+
+
+def test_normalize_folds_smart_quotes_to_ascii():
+    """Sonnet routinely normalizes curly typography even at temperature=0;
+    the drift guard must fold the input the same way."""
+    assert normalize_whitespace("don\u2019t") == "don't"
+    assert normalize_whitespace("\u201chello\u201d") == "\"hello\""
+    assert normalize_whitespace("dash\u2014here") == "dash-here"
+    assert normalize_whitespace("etc\u2026") == "etc..."
+
+
+def test_normalize_strips_markdown_emphasis_at_word_boundary():
+    """The system prompt tells the LLM to drop markdown emphasis syntax
+    after deciding whether to tag it. Normalizer must drop the same
+    markers from the input side for a fair comparison."""
+    assert normalize_whitespace("**bold** word") == "bold word"
+    assert normalize_whitespace("*Summary:* text") == "Summary: text"
+    assert normalize_whitespace("__strong__ run") == "strong run"
+
+
+def test_normalize_strips_leading_whitespace_on_quote_lines():
+    """When the LLM emits a quoted line with a stray leading space the
+    drift guard should still match the un-spaced input."""
+    inp = "Bruce says:\n\nThe Method is..."
+    out = "Bruce says:\n\n The Method is..."
+    assert normalize_whitespace(inp) == normalize_whitespace(out)
