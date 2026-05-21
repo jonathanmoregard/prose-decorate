@@ -167,3 +167,32 @@ def test_normalize_strips_leading_whitespace_on_quote_lines():
     inp = "Bruce says:\n\nThe Method is..."
     out = "Bruce says:\n\n The Method is..."
     assert normalize_whitespace(inp) == normalize_whitespace(out)
+
+
+def test_strip_bare_http_url():
+    md = "See https://example.com/foo/bar for details."
+    out = strip_markdown(md)
+    assert "https" not in out
+    assert "example.com" not in out
+    assert "[link]" in out
+    assert "See" in out and "for details" in out
+
+
+def test_strip_bare_url_with_trailing_period():
+    md = "Visit https://example.com/page."
+    out = strip_markdown(md)
+    assert "https" not in out
+    # Sentence-final period preserved (URL regex doesn't consume it)
+    assert out.rstrip().endswith(".")
+
+
+def test_strip_preserves_inline_url_in_markdown_link():
+    """If the URL was already inside `[text](url)`, the link rewrite
+    drops it before the bare-URL pass sees it — text only remains."""
+    md = "See [the docs](https://example.com/docs) here."
+    out = strip_markdown(md)
+    assert "https" not in out
+    assert "example.com" not in out
+    assert "the docs" in out
+    # `[link]` token should NOT appear since the rewrite already handled it
+    assert "[link]" not in out

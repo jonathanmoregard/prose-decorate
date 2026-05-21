@@ -24,6 +24,14 @@ _INDENTED_CODE_BLOCK = re.compile(
 )
 _IMAGE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
 _LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+# Bare URLs in prose. Substack writers paste raw URLs all the time (`Here
+# is a link: https://choosehappiness.net/about-bruce/`). TTS reads them
+# verbatim — "h-t-t-p-s colon slash slash..." — which is unlistenable.
+# Replace with a speakable token. Match permissive scheme + host + path
+# chars; stop at whitespace, closing-paren, or trailing punct like `,` /
+# `.` (a sentence-final period after a URL is ambiguous; we accept the
+# rare false positive over emitting "dot html" as a sentence terminator).
+_BARE_URL = re.compile(r"https?://[^\s<>()\[\]]+[^\s<>()\[\].,;:!?]")
 _REFERENCE_LINK = re.compile(r"\[([^\]]+)\]\[[^\]]*\]")
 # `[label]: https://...` reference-link definition rows. Multiline so we
 # match each one independently; pattern requires the leading `[label]:`
@@ -56,6 +64,9 @@ def strip_markdown(text: str) -> str:
     text = _REFERENCE_LINK.sub(r"\1", text)
     # Drop bottom-of-document reference-link definitions.
     text = _REFERENCE_LINK_DEF.sub("", text)
+    # Bare URLs in prose -> speakable token. Done AFTER markdown-link
+    # rewrites so a `[text](url)` pair has already lost its URL by now.
+    text = _BARE_URL.sub("[link]", text)
     # Inline code -> [code] token (TTS would otherwise read literal punct).
     text = _INLINE_CODE.sub("[code]", text)
     # Tables -> single [table omitted] line per table-run. Strategy:

@@ -81,6 +81,16 @@ in brackets works (e.g. `[after a moment of hesitation]`). Prefer the
 short standard tags listed above unless the prose is doing something
 unusual.
 
+## Tone reset (IMPORTANT)
+
+S2-Pro tone tags PERSIST forward — `[reading aloud]` keeps the quoted-
+voice rendering active for everything that follows until another tone
+tag overrides it. You MUST emit a closing tone-reset tag at the end of
+any quoted/blockquote/tone-shifted region so the narrator returns to
+its default cadence. Use `[back to narration]` (preferred) or
+`[narrator's voice]`. The reset goes immediately AFTER the last word
+of the quoted span, BEFORE the next paragraph break.
+
 ## Rules
 
 1. PRESERVE EVERY WORD VERBATIM. INSERT tags, NEVER rewrite or delete
@@ -103,7 +113,8 @@ unusual.
    - An em-dash can be a long pause OR a short aside-pause-then-resume.
      Read the sentence and decide. Don't tag every em-dash.
    - A blockquote is usually `[reading aloud]` or `[thoughtfully]`. Tag
-     the FIRST sentence of the quote, not every line.
+     the FIRST sentence of the quote, not every line, AND close it with
+     `[back to narration]` after the last sentence of the quote.
 
 ## Example
 
@@ -115,11 +126,14 @@ age, diet, and the quality of available sunbeams.
 
 > Older cats sleep more — kittens, surprisingly, also sleep a lot.
 
+That's why their owners install heated beds.
+
 OUTPUT:
 Cats Sleep A Lot [long pause] Cats sleep up to [emphasis] sixteen \
 hours a day. The exact number depends on age, diet, and the quality \
-of available sunbeams. [thoughtfully] Older cats sleep more [short \
-pause] kittens, surprisingly, also sleep a lot.
+of available sunbeams. [reading aloud] Older cats sleep more [short \
+pause] kittens, surprisingly, also sleep a lot. [back to narration] \
+That's why their owners install heated beds.
 
 Decorate the chunk below.
 """
