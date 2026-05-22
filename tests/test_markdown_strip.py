@@ -70,12 +70,23 @@ def test_strip_footnote_def_and_ref():
     assert "Sentence with a footnote" in out
 
 
-def test_strip_heading_hashes_but_keep_text():
+def test_strip_heading_wrapped_with_firmly_and_pause():
+    """Headings get `[firmly] ... [back to narration] [very long pause]`
+    so the narrator delivers them deliberately + takes a 1.5s beat."""
     md = "# Title\n\nBody.\n\n## Subhead\n\nMore body."
     out = strip_markdown(md)
-    assert "Title" in out
-    assert "Subhead" in out
-    assert "#" not in out
+    assert "[firmly] Title [back to narration] [very long pause]" in out
+    assert "[firmly] Subhead [back to narration] [very long pause]" in out
+    assert "Body." in out
+    # No stray `#` hashes left.
+    assert not any(ln.lstrip().startswith("#") for ln in out.split("\n"))
+
+
+def test_strip_heading_with_bold_inside_drops_markdown():
+    md = "# **Bold Heading**\n\nBody."
+    out = strip_markdown(md)
+    assert "**" not in out
+    assert "[firmly] Bold Heading [back to narration] [very long pause]" in out
 
 
 def test_strip_horizontal_rule():
@@ -86,11 +97,17 @@ def test_strip_horizontal_rule():
     assert "After." in out
 
 
-def test_strip_preserves_emphasis_and_blockquote():
+def test_strip_drops_emphasis_markers_deterministically():
+    """Markdown emphasis is stripped deterministically (was: passed
+    through for LLM to decide). Reason: passthrough chunks (where the
+    drift guard rejected Claude's output) otherwise leak `**` into Fish
+    and the narrator reads 'asterisk asterisk' aloud. Blockquotes still
+    preserved as paragraph-leading `>` for LLM tone decisions."""
     md = "First **bold** word.\n\n> A quoted aside.\n\nThird *italic* word."
     out = strip_markdown(md)
-    assert "**bold**" in out
-    assert "*italic*" in out
+    assert "**" not in out
+    assert "First bold word." in out
+    assert "Third italic word." in out
     assert "> A quoted aside." in out
 
 

@@ -159,22 +159,21 @@ _PARAGRAPH_PAUSE_TAG = "[long pause]"
 _TAG_AT_TAIL_RE = re.compile(r"\[([^\[\]\n]+)\]\s*[^\w]*$")
 
 # Tag-body substrings that mean "no extra pause needed after this".
-# These needles MUST NOT overlap any entry in `_TONE_OPENERS` — overlap
-# would make the enforcer silently skip paragraphs ending in an OPENER
-# (which would in turn produce a missing-beat-after-tone-shift in audio).
-# Currently safe: openers are short adverbs (`thoughtfully`, `softly`,
-# ...), none contain the strings below.
+# These MUST be pause-rendering tags only — anything that produces
+# real silence in the audio. Tone closers (`[back to narration]`,
+# `[narrator's voice]`, etc.) are NOT in this list anymore: closers
+# are tone-state markers, not silence-producing. Empirical bug
+# 2026-05-22: paragraph ending in `[back to narration]` bled directly
+# into the next paragraph because the closer suppressed the
+# paragraph-pause insertion. Closers no longer suppress.
+#
+# These needles must not overlap any entry in `_TONE_OPENERS` — overlap
+# would silently skip pause after an opener (a worse bug). Currently
+# safe.
 _TAIL_TAG_SKIPS_PAUSE = (
     "pause",
     "beat",
     "breath",
-    # Tone closers — a beat immediately after a voice-reset would
-    # interrupt the natural settle-back (advisor round-1 H1).
-    "narration",
-    "narrator",
-    "default voice",
-    "regular voice",
-    "normal voice",
 )
 
 

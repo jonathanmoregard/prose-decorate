@@ -388,14 +388,17 @@ def test_paragraph_pauses_skip_already_paused_tail():
     assert "[short pause]" in out
 
 
-def test_paragraph_pauses_skip_tone_closer_tail():
-    """Advisor round-1 H1: pause immediately after a voice-reset is
-    noisy. Skip paragraphs whose tail is a tone-closer."""
+def test_paragraph_pauses_appended_after_tone_closer():
+    """Tone closers do NOT produce silence, so paragraph-pause
+    enforcement MUST still fire after them. Earlier 'skip-on-closer'
+    behavior caused real-article bleed (2026-05-22): paragraph ending
+    in `[back to narration]` ran directly into the next without a beat."""
     from prose_decorate.decorate import enforce_paragraph_pauses
     text = "Quote ended. [back to narration]\n\nMid para.\n\nFinal."
     out = enforce_paragraph_pauses(text)
-    # Para 1 ends in closer (skip), Para 2 gets pause, Para 3 final (skip)
-    assert out.count("[long pause]") == 1
+    # Para 1 (ends in closer) gets a pause, Para 2 gets a pause,
+    # Para 3 final (skip) -> 2 pauses total.
+    assert out.count("[long pause]") == 2
     assert "[back to narration]" in out
     assert out.rstrip().endswith("Final.")
 

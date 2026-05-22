@@ -45,7 +45,7 @@ _TABLE_LINE = re.compile(r"^\s*\|.*\|\s*$")
 _TABLE_ALIGN = re.compile(r"^\s*\|?[\s:-]+\|[\s:-|]+\|?\s*$")
 _FOOTNOTE_DEF = re.compile(r"^\[\^[^\]]+\]:.*$", re.MULTILINE)
 _FOOTNOTE_REF_INLINE = re.compile(r"\[\^[^\]]+\]")
-_HEADING_HASH = re.compile(r"^(#{1,6})\s+", re.MULTILINE)
+_HEADING_LINE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
 _HORIZONTAL_RULE = re.compile(r"^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$", re.MULTILINE)
 
 
@@ -87,10 +87,28 @@ def strip_markdown(text: str) -> str:
     # belt-and-braces for non-Substack inputs).
     text = _FOOTNOTE_DEF.sub("", text)
     text = _FOOTNOTE_REF_INLINE.sub("", text)
-    # Heading hashes: drop leading `#`s but keep the heading text as its
-    # own paragraph (blank-line surrounded). The LLM uses the paragraph
-    # boundary to decide whether to insert a `[long pause]`.
-    text = _HEADING_HASH.sub("", text)
+    # Headings: wrap the heading text with `[firmly]` (a closed-set
+    # tonal opener) + `[back to narration]` + `[very long pause]` so
+    # the narrator marks the title with a more deliberate delivery and
+    # then takes a 1.5s beat before the body resumes. The deterministic
+    # pre-process knows from the `#` prefix that this is a heading;
+    # don't burden the LLM with rediscovering that.
+    def _heading_repl(m):
+        text_part = m.group(2).strip()
+        # Strip any markdown emphasis WITHIN the heading text so
+        # `# **Bold Heading**` doesn't survive as `**Bold Heading**`.
+        text_part = _EMPHASIS_RE.sub("", text_part)
+        return f"[firmly] {text_part} [back to narration] [very long pause]"
+    text = _HEADING_LINE.sub(_heading_repl, text)
+    # Markdown emphasis (`**bold**`, `*italic*`, `__strong__`, `_em_`) is
+    # stripped DETERMINISTICALLY here, not left for the LLM to remove.
+    # Passthrough chunks (where Claude's output was rejected by the
+    # drift guard and the original chunk is emitted unchanged) would
+    # otherwise leak `**` into Fish and the narrator literally reads
+    # "asterisk asterisk" (bug 2026-05-22). The LLM still decides
+    # whether to add an emphasis tag based on prose meaning — it just
+    # no longer sees the markdown-syntax cue.
+    text = _EMPHASIS_RE.sub("", text)
     # Horizontal rules -> blank line.
     text = _HORIZONTAL_RULE.sub("", text)
     # Collapse 3+ blank lines to 2 (one paragraph break).
