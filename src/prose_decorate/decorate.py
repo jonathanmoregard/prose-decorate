@@ -304,14 +304,36 @@ persistent voice switches, and don't need a close-tag.
    then drop the syntax characters. Don't pass markdown through.
 5. Map cues from the input judiciously, not mechanically:
    - A heading often deserves a `[long pause]` afterwards but not always.
-   - A `**bolded**` word might warrant `[emphasis]` but most bold text
-     in articles is technical-term marking, not emotional emphasis.
-     Skip it unless the surrounding prose clearly calls for stress.
    - An em-dash can be a long pause OR a short aside-pause-then-resume.
      Read the sentence and decide. Don't tag every em-dash.
    - A blockquote is usually `[reading aloud]` or `[thoughtfully]`. Tag
      the FIRST sentence of the quote, not every line, AND close it with
      `[back to narration]` after the last sentence of the quote.
+
+6. **EMPHASIS ON CONCLUSIONS — be more generous here than elsewhere.**
+   When prose builds toward a rhetorical conclusion, tag the operative
+   word or short phrase with `[emphasis]`. A human narrator reading
+   aloud will stress these naturally; the default cadence won't, so
+   the tag is doing real work. Examples (operative span in CAPS, you
+   emit `[emphasis] span` in the output):
+     "However, the truth is we can be happy NOW." -> emphasize "now"
+     "We will always experience unhappiness IF WE BELIEVE IN IT." ->
+        emphasize "if we believe in it"
+     "The Option Method addresses TOTAL happiness." -> emphasize "total"
+     "There is NO reason why you can't be." -> emphasize "no"
+   Look for: final pivot words (now, never, only, must, cannot, no),
+   conditional clauses that flip meaning (if/unless/until), the LAST
+   noun phrase of an aphorism, contrast words after "however / but /
+   yet / instead" when the sentence resolves to the speaker's claim.
+   You can use [emphasis] more often than tone tags — 1-2 per paragraph
+   in argumentative prose is normal. Skip emphasis only when the
+   sentence is purely descriptive.
+
+7. **Bold/italic markdown is NOT a signal**. The deterministic
+   pre-process strips `**bold**` / `*italic*` before you see the text,
+   because most markdown emphasis in articles marks technical terms or
+   foreign words (not rhetorical stress). Decide emphasis from PROSE
+   MEANING, not from removed-syntax cues.
 
 ## Example
 
