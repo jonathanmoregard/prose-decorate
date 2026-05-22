@@ -93,7 +93,7 @@ def test_validate_accepts_unmodified():
 
 
 def test_validate_accepts_tag_insertion():
-    ok, _ = _validate("Hello world.", "Hello [short pause] world.")
+    ok, _ = _validate("Hello world.", "Hello [long pause] world.")
     assert ok
 
 
@@ -123,7 +123,7 @@ def test_validate_floor_allows_short_input_with_one_tag():
 def test_validate_tolerates_whitespace_collapse():
     """LLM frequently joins soft-line-wrapped input. Normalizer collapses."""
     input_text = "Hello  \nworld."
-    output_text = "Hello [short pause] world."
+    output_text = "Hello [long pause] world."
     ok, _ = _validate(input_text, output_text)
     assert ok
 
@@ -139,11 +139,11 @@ def _fake_response(text: str):
 def test_decorate_chunk_success_returns_decorated():
     client = MagicMock()
     client.messages.create.return_value = _fake_response(
-        "Hello [short pause] world."
+        "Hello [long pause] world."
     )
     out = decorate_chunk(client, "Hello world.", sleep=lambda _: None)
     assert out.status == DecorateStatus.DECORATED
-    assert out.text == "Hello [short pause] world."
+    assert out.text == "Hello [long pause] world."
 
 
 def test_decorate_chunk_passes_temperature_zero_and_system():
@@ -370,18 +370,22 @@ def test_paragraph_pauses_added_to_each_boundary_except_final():
     text = "Para one.\n\nPara two.\n\nPara three."
     out = enforce_paragraph_pauses(text)
     # Paragraphs 1 and 2 get pauses; paragraph 3 (final) does not.
-    assert out.count("[short pause]") == 2
+    assert out.count("[long pause]") == 2
     assert out.rstrip().endswith("Para three.")
 
 
 def test_paragraph_pauses_skip_already_paused_tail():
     from prose_decorate.decorate import enforce_paragraph_pauses
-    text = "Para one [long pause]\n\nPara two.\n\nPara three."
+    # `[short pause]` on para 1's tail keeps the enforcer from stacking
+    # a `[long pause]` on top of it. Use the SHORT variant in input so
+    # the count test distinguishes pre-existing vs newly-inserted.
+    text = "Para one [short pause]\n\nPara two.\n\nPara three."
     out = enforce_paragraph_pauses(text)
-    # Para one already ends in pause (skip), Para two gets one,
-    # Para three is final (skip) -> exactly 1 inserted.
-    assert out.count("[short pause]") == 1
-    assert "[long pause]" in out
+    # Para one already ends in a pause-shaped tag (skip), Para two gets
+    # one inserted, Para three is final (skip) -> exactly 1 [long pause]
+    # inserted; the original [short pause] preserved.
+    assert out.count("[long pause]") == 1
+    assert "[short pause]" in out
 
 
 def test_paragraph_pauses_skip_tone_closer_tail():
@@ -391,7 +395,7 @@ def test_paragraph_pauses_skip_tone_closer_tail():
     text = "Quote ended. [back to narration]\n\nMid para.\n\nFinal."
     out = enforce_paragraph_pauses(text)
     # Para 1 ends in closer (skip), Para 2 gets pause, Para 3 final (skip)
-    assert out.count("[short pause]") == 1
+    assert out.count("[long pause]") == 1
     assert "[back to narration]" in out
     assert out.rstrip().endswith("Final.")
 
@@ -409,7 +413,7 @@ def test_paragraph_pauses_recognizes_beat_and_breath():
     text = "Para one [beat]\n\nPara two [breath]\n\nPara three.\n\nFinal."
     out = enforce_paragraph_pauses(text)
     # 1 & 2 already paused; 3 gets a pause; final skipped.
-    assert out.count("[short pause]") == 1
+    assert out.count("[long pause]") == 1
 
 
 def test_paragraph_pauses_handles_blank_paragraphs():
@@ -418,7 +422,7 @@ def test_paragraph_pauses_handles_blank_paragraphs():
     out = enforce_paragraph_pauses(text)
     assert "Para one." in out
     assert "Para two." in out
-    assert "[short pause]" in out
+    assert "[long pause]" in out
 
 
 def test_paragraph_pauses_single_paragraph_no_pause():
@@ -427,4 +431,4 @@ def test_paragraph_pauses_single_paragraph_no_pause():
     from prose_decorate.decorate import enforce_paragraph_pauses
     text = "Only one paragraph here."
     out = enforce_paragraph_pauses(text)
-    assert "[short pause]" not in out
+    assert "[long pause]" not in out

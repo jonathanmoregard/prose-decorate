@@ -140,7 +140,11 @@ def _check_tone_pairing(
 # noisy (existing pause/beat/breath OR a tone-closer like
 # `[back to narration]` where a stacked beat would feel mechanical).
 # Also skips the FINAL non-empty paragraph (no beat needed at EOF).
-_PARAGRAPH_PAUSE_TAG = "[short pause]"
+# Empirically `[short pause]` (~250ms) at every paragraph boundary
+# reads more like commas than paragraph breaks. `[long pause]` (~800ms)
+# matches the cadence a human narrator would use when ending a thought
+# and starting a new one.
+_PARAGRAPH_PAUSE_TAG = "[long pause]"
 _TAG_AT_TAIL_RE = re.compile(r"\[([^\[\]\n]+)\]\s*[^\w]*$")
 
 # Tag-body substrings that mean "no extra pause needed after this".
