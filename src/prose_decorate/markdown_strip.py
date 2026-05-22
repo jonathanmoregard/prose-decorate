@@ -45,6 +45,16 @@ _TABLE_LINE = re.compile(r"^\s*\|.*\|\s*$")
 _TABLE_ALIGN = re.compile(r"^\s*\|?[\s:-]+\|[\s:-|]+\|?\s*$")
 _FOOTNOTE_DEF = re.compile(r"^\[\^[^\]]+\]:.*$", re.MULTILINE)
 _FOOTNOTE_REF_INLINE = re.compile(r"\[\^[^\]]+\]")
+# Substack's HTML superscript footnote refs (`interview¹`, `distress.²`)
+# extract as inline single digits attached to a word/punctuation with
+# no preceding space: `interview1 where ...`, `distress.2 It ...`.
+# Match: single digit (1-9) immediately after a lowercase letter or
+# sentence punctuation, immediately followed by whitespace / end /
+# punctuation. Restricted to single digits to avoid stripping years
+# (`2014`), version numbers (`iPhone15`), or model strings.
+_FOOTNOTE_REF_SUPERSCRIPT = re.compile(
+    r"(?<=[a-z.,!?\"')\]])(\d)(?=\s|[.,;:?!\"')\]]|$)"
+)
 _HEADING_LINE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
 _HORIZONTAL_RULE = re.compile(r"^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$", re.MULTILINE)
 
@@ -87,6 +97,7 @@ def strip_markdown(text: str) -> str:
     # belt-and-braces for non-Substack inputs).
     text = _FOOTNOTE_DEF.sub("", text)
     text = _FOOTNOTE_REF_INLINE.sub("", text)
+    text = _FOOTNOTE_REF_SUPERSCRIPT.sub("", text)
     # Headings: wrap the heading text with `[firmly]` (a closed-set
     # tonal opener) + `[back to narration]` + `[very long pause]` so
     # the narrator marks the title with a more deliberate delivery and

@@ -214,3 +214,30 @@ def test_strip_preserves_inline_url_in_markdown_link():
     # rewrite already extracted the text, so the bare-URL pass sees
     # nothing left to substitute.
     assert "(a link)" not in out
+
+
+def test_strip_substack_inline_footnote_after_word():
+    md = "I listened to a podcast interview1 where things were said."
+    out = strip_markdown(md)
+    assert "interview1" not in out
+    assert "interview where" in out
+
+
+def test_strip_substack_inline_footnote_after_period():
+    md = "It builds tolerance to distress.2 It isn't the end."
+    out = strip_markdown(md)
+    assert "distress.2" not in out
+    assert "distress. It isn't" in out
+
+
+def test_strip_substack_inline_footnote_preserves_years():
+    md = "The 2014 study and iPhone15 model were discussed."
+    out = strip_markdown(md)
+    assert "2014" in out
+    assert "iPhone15" in out
+
+
+def test_strip_substack_inline_footnote_preserves_step_0_etc():
+    md = "He called it step 0 of the process."
+    out = strip_markdown(md)
+    assert "step 0" in out
