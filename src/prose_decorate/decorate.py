@@ -140,11 +140,21 @@ def _check_tone_pairing(
 # noisy (existing pause/beat/breath OR a tone-closer like
 # `[back to narration]` where a stacked beat would feel mechanical).
 # Also skips the FINAL non-empty paragraph (no beat needed at EOF).
-# Empirically `[short pause]` (~250ms) at every paragraph boundary
-# reads more like commas than paragraph breaks. `[long pause]` (~800ms)
-# matches the cadence a human narrator would use when ending a thought
-# and starting a new one.
-_PARAGRAPH_PAUSE_TAG = "[long pause]"
+# Empirically measured pause durations on Fish s2-pro (paragraph-pause
+# probe, 2026-05-22, prose-decorate root-cause investigation):
+#
+#   [short pause]          ~250 ms  — comma-length, mid-sentence beat
+#   [long pause]           ~240 ms  — barely longer than no tag at all
+#   [3 second pause]       ~1.49 s  — Fish takes the description seriously
+#   [pause for two seconds] ~1.78 s
+#   [very long pause]      ~1.85 s  — clear thought-to-thought boundary
+#
+# Fish docs nominally describe `[long pause]` as ~800 ms but our actual
+# s2-pro renders it as ~240 ms. Empirical wins. `[very long pause]` is
+# the right cadence for a paragraph boundary in narrated prose — long
+# enough to feel like a beat between thoughts, short enough not to
+# stall the listener.
+_PARAGRAPH_PAUSE_TAG = "[very long pause]"
 _TAG_AT_TAIL_RE = re.compile(r"\[([^\[\]\n]+)\]\s*[^\w]*$")
 
 # Tag-body substrings that mean "no extra pause needed after this".
