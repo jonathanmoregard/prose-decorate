@@ -310,24 +310,48 @@ persistent voice switches, and don't need a close-tag.
      the FIRST sentence of the quote, not every line, AND close it with
      `[back to narration]` after the last sentence of the quote.
 
-6. **EMPHASIS ON CONCLUSIONS — be more generous here than elsewhere.**
-   When prose builds toward a rhetorical conclusion, tag the operative
-   word or short phrase with `[emphasis]`. A human narrator reading
-   aloud will stress these naturally; the default cadence won't, so
-   the tag is doing real work. Examples (operative span in CAPS, you
-   emit `[emphasis] span` in the output):
-     "However, the truth is we can be happy NOW." -> emphasize "now"
-     "We will always experience unhappiness IF WE BELIEVE IN IT." ->
-        emphasize "if we believe in it"
-     "The Option Method addresses TOTAL happiness." -> emphasize "total"
-     "There is NO reason why you can't be." -> emphasize "no"
-   Look for: final pivot words (now, never, only, must, cannot, no),
-   conditional clauses that flip meaning (if/unless/until), the LAST
-   noun phrase of an aphorism, contrast words after "however / but /
-   yet / instead" when the sentence resolves to the speaker's claim.
-   You can use [emphasis] more often than tone tags — 1-2 per paragraph
-   in argumentative prose is normal. Skip emphasis only when the
-   sentence is purely descriptive.
+6. **EMPHASIS ON RHETORICAL OPERATIVE WORDS — be more generous here
+   than elsewhere.** A human narrator stresses certain words to make
+   meaning legible. The default model cadence won't, so `[emphasis]`
+   is doing real work. Look for these patterns; tag the operative span
+   with `[emphasis]` immediately before it. (Span in CAPS for the
+   examples; you emit `[emphasis] span` in the output text.)
+
+   a. **Final pivot words of a conclusion**:
+      "...we can be happy NOW."          -> emphasize "now"
+      "There is NO reason why..."         -> emphasize "no"
+      "We can NEVER escape..."            -> emphasize "never"
+      Common pivots: now, never, only, must, cannot, no, must not,
+      always, all, every.
+
+   b. **Setup-and-contrast hinges**: when a sentence claims one frame
+      and the next (or the same sentence after a comma) claims its
+      opposite, emphasize the HINGE word that the contrast turns on.
+      The hinge is often a copula (am/is/are), a modal (can/cannot/
+      must), a verb of being (become/seem/appear), or a polar word
+      (yes/no/not). Examples:
+      "as if we ARE our thoughts. Instead, we BECOME observers..."
+         -> emphasize "are" in S1, "become" in S2
+      "Not X, but Y"                       -> emphasize "but"
+      "It seemed obvious. But it WASN'T." -> emphasize "wasn't"
+      "We don't HAVE to suffer."           -> emphasize "have"
+
+   c. **Conditional clauses that flip meaning**:
+      "...IF WE BELIEVE IN IT."           -> emphasize "if we believe in it"
+      "...UNLESS we choose otherwise."    -> emphasize "unless"
+
+   d. **The last noun phrase of an aphorism**:
+      "The Option Method addresses TOTAL HAPPINESS." -> "total happiness"
+      "The only thing standing in the way is OURSELVES." -> "ourselves"
+
+   e. **Contrast resolutions after "however / but / yet / instead"
+      when the sentence delivers the speaker's actual claim**:
+      "However, the TRUTH is..."          -> emphasize "truth"
+
+   1-2 emphases per paragraph in argumentative prose is the explicit
+   norm. Descriptive paragraphs may have zero. When in doubt about a
+   sentence, ask: would a careful human narrator land harder on any
+   word here? If yes, tag it.
 
 7. **Bold/italic markdown is NOT a signal**. The deterministic
    pre-process strips `**bold**` / `*italic*` before you see the text,
