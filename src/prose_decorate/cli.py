@@ -200,7 +200,11 @@ def main(argv: list[str] | None = None) -> int:
         debug_dir=args.debug,
     )
 
-    output = "\n\n".join(pieces) + "\n"
+    output = "\n\n".join(pieces)
+    # Deterministic paragraph-pause enforcement runs on the final
+    # assembled text so it sees the FULL article's paragraph boundaries
+    # in one pass and stays idempotent across cached/passthrough chunks.
+    output = decorate.enforce_paragraph_pauses(output).rstrip() + "\n"
     _write_output(output, args.output)
 
     _log(f"done. {len(chunks)} chunks ({decorated} decorated, "

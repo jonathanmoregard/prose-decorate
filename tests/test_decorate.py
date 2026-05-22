@@ -359,3 +359,72 @@ def test_tone_pairing_chunk_boundary_synthetic_regression():
         strict_tones=True,
     )
     assert ok
+
+
+# ---------- paragraph-pause enforcement ----------
+
+def test_paragraph_pauses_added_to_each_boundary_except_final():
+    """Advisor round-1 H2: final paragraph is intentionally skipped
+    (no beat needed at EOF)."""
+    from prose_decorate.decorate import enforce_paragraph_pauses
+    text = "Para one.\n\nPara two.\n\nPara three."
+    out = enforce_paragraph_pauses(text)
+    # Paragraphs 1 and 2 get pauses; paragraph 3 (final) does not.
+    assert out.count("[short pause]") == 2
+    assert out.rstrip().endswith("Para three.")
+
+
+def test_paragraph_pauses_skip_already_paused_tail():
+    from prose_decorate.decorate import enforce_paragraph_pauses
+    text = "Para one [long pause]\n\nPara two.\n\nPara three."
+    out = enforce_paragraph_pauses(text)
+    # Para one already ends in pause (skip), Para two gets one,
+    # Para three is final (skip) -> exactly 1 inserted.
+    assert out.count("[short pause]") == 1
+    assert "[long pause]" in out
+
+
+def test_paragraph_pauses_skip_tone_closer_tail():
+    """Advisor round-1 H1: pause immediately after a voice-reset is
+    noisy. Skip paragraphs whose tail is a tone-closer."""
+    from prose_decorate.decorate import enforce_paragraph_pauses
+    text = "Quote ended. [back to narration]\n\nMid para.\n\nFinal."
+    out = enforce_paragraph_pauses(text)
+    # Para 1 ends in closer (skip), Para 2 gets pause, Para 3 final (skip)
+    assert out.count("[short pause]") == 1
+    assert "[back to narration]" in out
+    assert out.rstrip().endswith("Final.")
+
+
+def test_paragraph_pauses_idempotent():
+    from prose_decorate.decorate import enforce_paragraph_pauses
+    text = "Para one.\n\nPara two.\n\nPara three."
+    once = enforce_paragraph_pauses(text)
+    twice = enforce_paragraph_pauses(once)
+    assert once == twice
+
+
+def test_paragraph_pauses_recognizes_beat_and_breath():
+    from prose_decorate.decorate import enforce_paragraph_pauses
+    text = "Para one [beat]\n\nPara two [breath]\n\nPara three.\n\nFinal."
+    out = enforce_paragraph_pauses(text)
+    # 1 & 2 already paused; 3 gets a pause; final skipped.
+    assert out.count("[short pause]") == 1
+
+
+def test_paragraph_pauses_handles_blank_paragraphs():
+    from prose_decorate.decorate import enforce_paragraph_pauses
+    text = "Para one.\n\n\n\nPara two.\n\nFinal."  # extra blank line in middle
+    out = enforce_paragraph_pauses(text)
+    assert "Para one." in out
+    assert "Para two." in out
+    assert "[short pause]" in out
+
+
+def test_paragraph_pauses_single_paragraph_no_pause():
+    """If there's only one paragraph, the final-paragraph rule means
+    no pause anywhere."""
+    from prose_decorate.decorate import enforce_paragraph_pauses
+    text = "Only one paragraph here."
+    out = enforce_paragraph_pauses(text)
+    assert "[short pause]" not in out

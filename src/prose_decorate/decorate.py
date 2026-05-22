@@ -133,6 +133,78 @@ def _check_tone_pairing(
     return True, ""
 
 
+# Deterministic paragraph-pause enforcement. The user wants every
+# paragraph boundary to carry a beat at minimum, regardless of whether
+# Claude's prosody pass decided to tag it. Idempotent: skips paragraphs
+# whose tail already ends with a tag that would make an extra pause
+# noisy (existing pause/beat/breath OR a tone-closer like
+# `[back to narration]` where a stacked beat would feel mechanical).
+# Also skips the FINAL non-empty paragraph (no beat needed at EOF).
+_PARAGRAPH_PAUSE_TAG = "[short pause]"
+_TAG_AT_TAIL_RE = re.compile(r"\[([^\[\]\n]+)\]\s*[^\w]*$")
+
+# Tag-body substrings that mean "no extra pause needed after this".
+# These needles MUST NOT overlap any entry in `_TONE_OPENERS` — overlap
+# would make the enforcer silently skip paragraphs ending in an OPENER
+# (which would in turn produce a missing-beat-after-tone-shift in audio).
+# Currently safe: openers are short adverbs (`thoughtfully`, `softly`,
+# ...), none contain the strings below.
+_TAIL_TAG_SKIPS_PAUSE = (
+    "pause",
+    "beat",
+    "breath",
+    # Tone closers — a beat immediately after a voice-reset would
+    # interrupt the natural settle-back (advisor round-1 H1).
+    "narration",
+    "narrator",
+    "default voice",
+    "regular voice",
+    "normal voice",
+)
+
+
+def _paragraph_already_paused(paragraph_text: str) -> bool:
+    """True if the paragraph's tail ends with a tag whose presence
+    obviates appending another `[short pause]`."""
+    m = _TAG_AT_TAIL_RE.search(paragraph_text)
+    if not m:
+        return False
+    body = m.group(1).strip().casefold()
+    return any(needle in body for needle in _TAIL_TAG_SKIPS_PAUSE)
+
+
+def enforce_paragraph_pauses(text: str) -> str:
+    """Insert `[short pause]` between paragraphs that don't already
+    carry a tail tag making one redundant. Idempotent across multiple
+    passes.
+
+    The FINAL non-empty paragraph is intentionally skipped — a beat at
+    EOF just hangs ~250ms of silence (advisor round-1 H2). Passthrough
+    chunks (untagged Markdown) participate normally; the pause is
+    deterministic prosody regardless of source.
+    """
+    paragraphs = text.split("\n\n")
+    # Index of the last non-empty paragraph — that's the one to skip.
+    last_nonempty = -1
+    for i, para in enumerate(paragraphs):
+        if para.rstrip():
+            last_nonempty = i
+    out: list[str] = []
+    for i, para in enumerate(paragraphs):
+        stripped = para.rstrip()
+        if not stripped:
+            out.append(para)
+            continue
+        if i == last_nonempty:
+            out.append(para)
+            continue
+        if _paragraph_already_paused(stripped):
+            out.append(para)
+        else:
+            out.append(f"{stripped} {_PARAGRAPH_PAUSE_TAG}")
+    return "\n\n".join(out)
+
+
 def _input_ends_in_blockquote(text: str) -> bool:
     """True if the last non-blank line of the chunk's input is a
     Markdown blockquote (`>` prefix). Used by `_check_tone_pairing` to
