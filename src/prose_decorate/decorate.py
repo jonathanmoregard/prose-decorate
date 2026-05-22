@@ -446,7 +446,12 @@ def _validate(
         )
         if not ok:
             return False, reason
-    expected_words = _word_tokens(input_text)
+    # strip_tags BOTH sides: bracket-content is TAGS, not prose. The
+    # deterministic pre-process emits tags like `[firmly]` around
+    # headings — those words are markup, not narrated prose. Word-drift
+    # check compares spoken-word streams, so strip tags on both sides
+    # to compare apples-to-apples.
+    expected_words = _word_tokens(strip_tags(input_text))
     actual_words = _word_tokens(strip_tags(output_text))
     if expected_words != actual_words:
         diff = _word_drift_summary(expected_words, actual_words)
