@@ -140,21 +140,22 @@ def _check_tone_pairing(
 # noisy (existing pause/beat/breath OR a tone-closer like
 # `[back to narration]` where a stacked beat would feel mechanical).
 # Also skips the FINAL non-empty paragraph (no beat needed at EOF).
-# Empirically measured pause durations on Fish s2-pro (paragraph-pause
-# probe, 2026-05-22, prose-decorate root-cause investigation):
+# Pause tag emitted at paragraph boundaries. tts-tool's chunker parses
+# this out, splits the text into Fish-callable segments at each
+# occurrence, and inserts a deterministic silence-MP3 of the matching
+# duration during stitch. So the AUDIO duration is decided by
+# tts-tool's parse_pause_duration map, NOT by Fish.
 #
-#   [short pause]          ~250 ms  — comma-length, mid-sentence beat
-#   [long pause]           ~240 ms  — barely longer than no tag at all
-#   [3 second pause]       ~1.49 s  — Fish takes the description seriously
-#   [pause for two seconds] ~1.78 s
-#   [very long pause]      ~1.85 s  — clear thought-to-thought boundary
+# Mapping (in tts-tool/chunk.py::parse_pause_duration):
+#   [short pause]         -> 0.3 s
+#   [pause]               -> 0.5 s
+#   [long pause]          -> 1.0 s
+#   [very long pause]     -> 1.5 s
+#   [N second pause]      -> N    s
 #
-# Fish docs nominally describe `[long pause]` as ~800 ms but our actual
-# s2-pro renders it as ~240 ms. Empirical wins. `[very long pause]` is
-# the right cadence for a paragraph boundary in narrated prose — long
-# enough to feel like a beat between thoughts, short enough not to
-# stall the listener.
-_PARAGRAPH_PAUSE_TAG = "[very long pause]"
+# 1.0 s reads as a clear paragraph beat without stalling. Bump to
+# [very long pause] for slower / more deliberate narration.
+_PARAGRAPH_PAUSE_TAG = "[long pause]"
 _TAG_AT_TAIL_RE = re.compile(r"\[([^\[\]\n]+)\]\s*[^\w]*$")
 
 # Tag-body substrings that mean "no extra pause needed after this".
