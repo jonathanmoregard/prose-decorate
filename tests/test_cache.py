@@ -69,3 +69,23 @@ def test_put_atomic_no_tmp_left(tmp_path: Path):
     cdir = cache.chunks_dir(tmp_path)
     cache.put(cdir, "k", "data")
     assert list(cdir.glob("*.tmp")) == []
+
+
+def test_key_changes_with_register():
+    base = dict(
+        chunk_text="hi", prev_context="",
+        prompt_template_hash="h", model="m", api_version="v",
+    )
+    base_key = cache.key_for(**base)
+    sleepy_key = cache.key_for(**base, register="calm sleepy bedtime")
+    firm_key = cache.key_for(**base, register="firm matter-of-fact")
+    assert base_key != sleepy_key
+    assert sleepy_key != firm_key
+
+
+def test_key_register_empty_matches_unset():
+    base = dict(
+        chunk_text="hi", prev_context="",
+        prompt_template_hash="h", model="m", api_version="v",
+    )
+    assert cache.key_for(**base) == cache.key_for(**base, register="")

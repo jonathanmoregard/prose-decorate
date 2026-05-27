@@ -156,6 +156,39 @@ def test_decorate_chunk_passes_temperature_zero_and_system():
     assert kwargs["messages"][0]["role"] == "user"
 
 
+def test_decorate_chunk_register_injects_preamble_into_system():
+    """`register` shows up as a Register-constraint preamble in the system prompt."""
+    client = MagicMock()
+    client.messages.create.return_value = _fake_response("Hello.")
+    decorate_chunk(
+        client, "Hello.",
+        register="calm, meandering, sleepy bedtime narration",
+        sleep=lambda _: None,
+    )
+    sys_prompt = client.messages.create.call_args.kwargs["system"]
+    assert "Register constraint" in sys_prompt
+    assert "calm, meandering, sleepy bedtime narration" in sys_prompt
+    # Base prompt still present
+    assert "## Tag reference" in sys_prompt
+
+
+def test_decorate_chunk_empty_register_leaves_base_prompt():
+    client = MagicMock()
+    client.messages.create.return_value = _fake_response("Hello.")
+    decorate_chunk(client, "Hello.", register="", sleep=lambda _: None)
+    sys_prompt = client.messages.create.call_args.kwargs["system"]
+    assert "Register constraint" not in sys_prompt
+    assert "## Tag reference" in sys_prompt
+
+
+def test_decorate_chunk_whitespace_only_register_treated_as_empty():
+    client = MagicMock()
+    client.messages.create.return_value = _fake_response("Hello.")
+    decorate_chunk(client, "Hello.", register="   \n  ", sleep=lambda _: None)
+    sys_prompt = client.messages.create.call_args.kwargs["system"]
+    assert "Register constraint" not in sys_prompt
+
+
 def test_decorate_chunk_passthrough_on_validation_fail():
     """Model rewrites the prose; decorate must passthrough."""
     client = MagicMock()

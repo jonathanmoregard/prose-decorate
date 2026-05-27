@@ -32,13 +32,17 @@ def key_for(
     prompt_template_hash: str,
     model: str,
     api_version: str,
+    register: str = "",
 ) -> str:
+    """`register` is the --register hint string; included in the key so
+    swapping register invalidates without manual --no-cache."""
     payload = "|".join([
         chunk_text,
         prev_context,
         prompt_template_hash,
         model,
         api_version,
+        register,
     ]).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
