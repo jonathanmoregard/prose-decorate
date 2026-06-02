@@ -534,6 +534,33 @@ def _retriable(exc: BaseException) -> bool:
     )
 
 
+_REGISTER_PREAMBLE = """\
+## Register constraint (applies to ALL tag choices below)
+
+Bias every tonal / pace / emphasis decision toward this register:
+
+  {register}
+
+This is a global hint about the kind of delivery the listener wants —
+treat it as a soft constraint that shifts WHICH tags you reach for.
+If a paragraph would naturally call for a firm or matter-of-fact
+register, but the constraint says calm/soft/sleepy, prefer
+`[softly]`, `[thoughtfully]`, `[reflectively]` (and shorter pauses
+that don't jolt) over `[firmly]` or `[matter-of-factly]`. Likewise,
+de-emphasize bombastic `[emphasis]` placements that would feel out
+of register; keep emphasis only where the meaning truly hinges.
+
+"""
+
+
+def _build_system_prompt(register: str = "") -> str:
+    """Compose the system prompt with an optional register constraint
+    prepended. Empty / whitespace-only register -> base prompt unchanged."""
+    if not register.strip():
+        return _PROMPT_TEMPLATE
+    return _REGISTER_PREAMBLE.format(register=register.strip()) + _PROMPT_TEMPLATE
+
+
 def decorate_chunk(
     client: Any,
     chunk_text: str,
@@ -543,6 +570,7 @@ def decorate_chunk(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     max_retries: int = 3,
     strict_tones: bool = False,
+    register: str = "",
     sleep: Callable[[float], None] = time.sleep,
 ) -> DecorateResult:
     """Decorate one chunk. On any failure path returns a passthrough
@@ -566,7 +594,7 @@ def decorate_chunk(
                 model=model,
                 max_tokens=max_tokens,
                 temperature=0,
-                system=_PROMPT_TEMPLATE,
+                system=_build_system_prompt(register),
                 messages=[{"role": "user", "content": user_msg}],
             )
         except Exception as exc:  # noqa: BLE001

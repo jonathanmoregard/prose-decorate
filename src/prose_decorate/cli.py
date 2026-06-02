@@ -47,6 +47,11 @@ def _build_parser() -> argparse.ArgumentParser:
                         "`[back to narration]` (or substring variant) by "
                         "chunk-end. Fails -> passthrough that chunk. Off by "
                         "default while passthrough rate is being measured.")
+    p.add_argument("--register", type=str, default="", metavar="HINT",
+                   help="Free-form natural-language constraint biasing all "
+                        "tag choices toward a register. Example: "
+                        "'calm, meandering, sleepy bedtime narration'. "
+                        "Prepended to the system prompt; cached separately.")
     return p
 
 
@@ -102,6 +107,7 @@ def _process(
     no_llm: bool,
     strict_tones: bool,
     debug_dir: Path | None,
+    register: str = "",
 ) -> tuple[list[str], int, int]:
     """Returns (output_pieces, decorated_count, passthrough_count)."""
     if no_llm:
@@ -137,6 +143,7 @@ def _process(
             prompt_template_hash=prompt_hash,
             model=model,
             api_version=decorate.ANTHROPIC_API_VERSION,
+            register=register,
         )
         if not no_cache:
             hit = cache.get(cdir, cache_key)
@@ -158,7 +165,7 @@ def _process(
         result = decorate.decorate_chunk(
             client, c.text,
             prev_context=c.prev_context, model=model,
-            strict_tones=strict_tones,
+            strict_tones=strict_tones, register=register,
         )
         if result.ok:
             decorated += 1
@@ -198,6 +205,7 @@ def main(argv: list[str] | None = None) -> int:
         no_llm=args.no_llm,
         strict_tones=args.strict_tones,
         debug_dir=args.debug,
+        register=args.register,
     )
 
     output = "\n\n".join(pieces)
