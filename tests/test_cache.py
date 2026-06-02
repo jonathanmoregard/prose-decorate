@@ -89,3 +89,25 @@ def test_key_register_empty_matches_unset():
         prompt_template_hash="h", model="m", api_version="v",
     )
     assert cache.key_for(**base) == cache.key_for(**base, register="")
+
+
+def test_key_changes_with_audio_hash():
+    """Audio runs must invalidate independently from text-only runs.
+    Same chunk + register + model but different audio bytes -> different key."""
+    base = dict(
+        chunk_text="hi", prev_context="",
+        prompt_template_hash="h", model="m", api_version="v",
+    )
+    base_key = cache.key_for(**base)
+    audio_a = cache.key_for(**base, audio_hash="a" * 64)
+    audio_b = cache.key_for(**base, audio_hash="b" * 64)
+    assert base_key != audio_a
+    assert audio_a != audio_b
+
+
+def test_key_audio_hash_empty_matches_unset():
+    base = dict(
+        chunk_text="hi", prev_context="",
+        prompt_template_hash="h", model="m", api_version="v",
+    )
+    assert cache.key_for(**base) == cache.key_for(**base, audio_hash="")

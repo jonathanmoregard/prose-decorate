@@ -33,9 +33,21 @@ def key_for(
     model: str,
     api_version: str,
     register: str = "",
+    audio_hash: str = "",
 ) -> str:
     """`register` is the --register hint string; included in the key so
-    swapping register invalidates without manual --no-cache."""
+    swapping register invalidates without manual --no-cache.
+
+    `audio_hash` is the sha256 hex of the audio chunk bytes (or `""`
+    for text-only runs). Including it in the key partitions the cache
+    so a text-only run and an `--audio` run over the same prose write
+    to and read from disjoint entries — swapping providers
+    (Anthropic Claude vs Gemini) never serves a stale result from the
+    other path. `model` already varies between the two paths, but the
+    audio_hash partition is the AUTHORITATIVE separator: a future
+    refactor that uses the same model name across paths still wouldn't
+    collide.
+    """
     payload = "|".join([
         chunk_text,
         prev_context,
@@ -43,6 +55,7 @@ def key_for(
         model,
         api_version,
         register,
+        audio_hash,
     ]).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 

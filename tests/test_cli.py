@@ -145,3 +145,153 @@ def test_cli_cache_hit_skips_synth(monkeypatch, tmp_path: Path):
     rc2 = cli.main(["-i", str(src), "-o", str(tmp_path / "b.txt")])
     assert rc2 == cli.EXIT_OK
     assert fake_client.messages.create.call_count == call_count_after_first
+
+
+# ---------- --audio path ----------
+
+def _fake_gemini_resp(text: str):
+    from types import SimpleNamespace
+    return SimpleNamespace(text=text)
+
+
+def test_cli_audio_flag_routes_to_gemini(monkeypatch, tmp_path: Path):
+    """--audio FILE flips the decoration path to Gemini multimodal.
+    The Anthropic client must NOT be called; the Gemini client must
+    receive the audio bytes and the chunk text."""
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    monkeypatch.setenv("PROSE_DECORATE_CACHE_DIR", str(tmp_path / "cache"))
+
+    src = tmp_path / "in.md"
+    src.write_text("Hello world.")
+    audio = tmp_path / "clip.mp3"
+    audio.write_bytes(b"\xff\xfb\x90\x00FAKE_MP3")
+
+    anth_client = MagicMock()
+    monkeypatch.setattr(
+        "prose_decorate.decorate.make_client", lambda *a, **k: anth_client
+    )
+
+    gemini_client = MagicMock()
+    gemini_client.models.generate_content.return_value = _fake_gemini_resp(
+        "Hello [long pause] world."
+    )
+    monkeypatch.setattr(
+        "prose_decorate.audio.make_client", lambda *a, **k: gemini_client
+    )
+
+    out = tmp_path / "out.txt"
+    rc = cli.main(["-i", str(src), "-o", str(out), "--audio", str(audio)])
+    assert rc == cli.EXIT_OK
+    assert "[long pause]" in out.read_text()
+    # Gemini was called; Anthropic was not.
+    assert gemini_client.models.generate_content.call_count >= 1
+    assert anth_client.messages.create.call_count == 0
+
+
+def test_cli_audio_missing_gemini_key_falls_to_passthrough(
+    monkeypatch, tmp_path: Path,
+):
+    """No GEMINI_API_KEY -> clear error, passthrough (not stack trace)."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY_FILE", raising=False)
+
+    src = tmp_path / "in.md"
+    src.write_text("Body one.\n\nBody two.")
+    audio = tmp_path / "clip.mp3"
+    audio.write_bytes(b"\xff\xfb\x90\x00FAKE")
+
+    out = tmp_path / "out.txt"
+    rc = cli.main(["-i", str(src), "-o", str(out), "--audio", str(audio)])
+    assert rc == cli.EXIT_FULL_PASSTHROUGH
+    assert "Body one." in out.read_text()
+
+
+def test_cli_audio_missing_file_is_clear_error(monkeypatch, tmp_path: Path):
+    """--audio pointing at a nonexistent file is a user error, not
+    a stack trace. Surface as EXIT_INVALID."""
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    src = tmp_path / "in.md"
+    src.write_text("Hello.")
+    out = tmp_path / "out.txt"
+    rc = cli.main([
+        "-i", str(src), "-o", str(out),
+        "--audio", str(tmp_path / "does-not-exist.mp3"),
+    ])
+    assert rc == cli.EXIT_INVALID
+
+
+def test_cli_audio_cache_keyed_on_audio_bytes(monkeypatch, tmp_path: Path):
+    """Same prose, different audio bytes -> two different cache entries.
+    Validates the audio_hash cache-key partition."""
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    monkeypatch.setenv("PROSE_DECORATE_CACHE_DIR", str(tmp_path / "cache"))
+
+    src = tmp_path / "in.md"
+    src.write_text("Hello world.")
+
+    audio_a = tmp_path / "a.mp3"
+    audio_a.write_bytes(b"AAA")
+    audio_b = tmp_path / "b.mp3"
+    audio_b.write_bytes(b"BBB")
+
+    gemini_client = MagicMock()
+    gemini_client.models.generate_content.return_value = _fake_gemini_resp(
+        "Hello [long pause] world."
+    )
+    monkeypatch.setattr(
+        "prose_decorate.audio.make_client", lambda *a, **k: gemini_client
+    )
+
+    # First run with audio_a -> 1 call
+    cli.main(["-i", str(src), "-o", str(tmp_path / "1.txt"), "--audio", str(audio_a)])
+    after_a = gemini_client.models.generate_content.call_count
+    # Same audio again -> cache hit, no new call
+    cli.main(["-i", str(src), "-o", str(tmp_path / "2.txt"), "--audio", str(audio_a)])
+    assert gemini_client.models.generate_content.call_count == after_a
+    # Different audio -> different cache key, new call
+    cli.main(["-i", str(src), "-o", str(tmp_path / "3.txt"), "--audio", str(audio_b)])
+    assert gemini_client.models.generate_content.call_count == after_a + 1
+
+
+def test_cli_audio_text_only_caches_are_disjoint(monkeypatch, tmp_path: Path):
+    """A text-only run and an --audio run over the same prose write to
+    DISJOINT cache entries. Flipping between paths never serves a
+    stale result from the wrong path."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    monkeypatch.setenv("PROSE_DECORATE_CACHE_DIR", str(tmp_path / "cache"))
+
+    src = tmp_path / "in.md"
+    src.write_text("Hello world.")
+    audio = tmp_path / "clip.mp3"
+    audio.write_bytes(b"AUDIO")
+
+    anth_client = MagicMock()
+    anth_client.messages.create.return_value = _fake_resp(
+        "Hello [short pause] world."
+    )
+    monkeypatch.setattr(
+        "prose_decorate.decorate.make_client", lambda *a, **k: anth_client
+    )
+
+    gemini_client = MagicMock()
+    gemini_client.models.generate_content.return_value = _fake_gemini_resp(
+        "Hello [long pause] world."
+    )
+    monkeypatch.setattr(
+        "prose_decorate.audio.make_client", lambda *a, **k: gemini_client
+    )
+
+    # Text-only run populates the text cache.
+    cli.main(["-i", str(src), "-o", str(tmp_path / "text.txt")])
+    text_calls = anth_client.messages.create.call_count
+    assert text_calls >= 1
+
+    # Audio run does NOT see the text-only cache hit.
+    cli.main(["-i", str(src), "-o", str(tmp_path / "audio.txt"), "--audio", str(audio)])
+    audio_calls = gemini_client.models.generate_content.call_count
+    assert audio_calls >= 1
+
+    # Outputs differ (different decoration paths emitted different tags)
+    assert "[short pause]" in (tmp_path / "text.txt").read_text()
+    assert "[long pause]" in (tmp_path / "audio.txt").read_text()
