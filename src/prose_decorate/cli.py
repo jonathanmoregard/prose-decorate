@@ -102,23 +102,14 @@ def _audio_model() -> str:
 _AUDIO_API_VERSION = "gemini-audio-v1"
 
 
-# MIME types Gemini accepts for inline audio. Mapping from file
-# extension to the canonical mime string we'll hand the SDK. Unknown
-# extensions fall back to audio/mp3 with a warning — most podcast
-# content is MP3 anyway.
-_AUDIO_MIME_BY_EXT = {
-    ".mp3": "audio/mp3",
-    ".m4a": "audio/mp4",
-    ".mp4": "audio/mp4",
-    ".aac": "audio/aac",
-    ".wav": "audio/wav",
-    ".ogg": "audio/ogg",
-    ".flac": "audio/flac",
-}
-
-
 def _detect_audio_mime(path: Path) -> str:
-    return _AUDIO_MIME_BY_EXT.get(path.suffix.lower(), audio_mod.DEFAULT_AUDIO_MIME)
+    """Resolve a file path to its Gemini MIME type via the centralized
+    map in `audio.AUDIO_MIME_BY_EXT` (includes `.opus` so podcast /
+    Telegram-voice content doesn't end up sent under `audio/mp3` and
+    rejected by Gemini)."""
+    return audio_mod.AUDIO_MIME_BY_EXT.get(
+        path.suffix.lower(), audio_mod.DEFAULT_AUDIO_MIME
+    )
 
 
 def _cache_root() -> str | None:
@@ -153,18 +144,24 @@ def _process_audio(
     register: str = "",
 ) -> tuple[list[str], int, int]:
     """Gemini multimodal path. Reads the audio once and sends it
-    inline with every chunk. For v0.1 we don't silence-split the
-    audio per-chunk — the Gemini 2.5 Pro context window comfortably
-    fits multi-hour audio at standard bitrates, so paying to upload
-    the same clip with each chunk request is the simplest correct
-    thing that keeps the per-chunk cache + validation infrastructure
-    unchanged. A follow-up that segment-aligns audio with text chunks
-    via audio_chunk.py is the next step when articles get long
-    enough to actually push past the inline cap."""
-    audio_bytes = audio_path.read_bytes()
-    audio_hash = audio_mod.audio_hash_for(audio_bytes)
-    audio_mime = _detect_audio_mime(audio_path)
+    inline with every chunk.
 
+    For v0.1 we don't silence-split the audio per-chunk: we send the
+    whole clip with every chunk request and let the Gemini context
+    window absorb it. The soft inline cap is 18 MB (~18 minutes of
+    128 kbps MP3 — `INLINE_AUDIO_SOFT_CAP_BYTES` in audio.py); past
+    that, the silence-aligned chunker in `audio_chunk.py` lands as a
+    follow-up. The current cache key includes the WHOLE-file
+    `audio_hash`, which is correct for the single-shot path but will
+    need to become the per-segment hash when the chunker lands —
+    TODO marker at the audio_hash compute below.
+
+    Fast-fail order matters: we resolve the API key and construct the
+    SDK client BEFORE the (potentially large) `read_bytes()` so a
+    missing-key dev environment doesn't pay the IO + memory cost to
+    discover it can't run.
+    """
+    # Fast-fail order: cheap-to-check preconditions first.
     try:
         api_key = audio_mod.read_gemini_api_key()
     except audio_mod.MissingGeminiAPIKey as e:
@@ -190,6 +187,17 @@ def _process_audio(
                     status="passthrough", reason=str(e),
                 )
         return ([c.text for c in chunks], 0, len(chunks))
+
+    # Only now do we pay the IO + memory cost — preconditions are green.
+    # TODO(audio-chunker): when audio_chunk.py is wired in, replace
+    # this whole-file hash with a per-segment hash so the cache key
+    # partitions correctly across chunked audio runs. Today the
+    # single-shot path sends the same bytes with every chunk so the
+    # whole-file hash is correct; the silence-split path will need
+    # per-window hashes to stay collision-free.
+    audio_bytes = audio_path.read_bytes()
+    audio_hash = audio_mod.audio_hash_for(audio_bytes)
+    audio_mime = _detect_audio_mime(audio_path)
 
     cdir = cache.chunks_dir(_cache_root())
     # Reuse the text prompt-template hash so register / prompt edits to

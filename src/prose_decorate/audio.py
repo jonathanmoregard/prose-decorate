@@ -57,6 +57,23 @@ INLINE_AUDIO_SOFT_CAP_BYTES = 18 * 1024 * 1024
 DEFAULT_AUDIO_MIME = "audio/mp3"
 
 
+# Suffix -> MIME mapping for inline audio requests. `.opus` lives here
+# because podcast-side pipelines (and Telegram voice notes) commonly
+# emit it, and Gemini rejects a `.opus` payload sent under audio/mp3.
+# Callers fall back to DEFAULT_AUDIO_MIME for unknown suffixes — that
+# gives a useful error on the Gemini side rather than a silent crash.
+AUDIO_MIME_BY_EXT: dict[str, str] = {
+    ".mp3": "audio/mp3",
+    ".m4a": "audio/mp4",
+    ".mp4": "audio/mp4",
+    ".aac": "audio/aac",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/opus",
+    ".flac": "audio/flac",
+}
+
+
 _AUDIO_GROUNDING_ADDENDUM = """\
 
 ## Audio-grounded section (IMPORTANT — applies to THIS request only)
@@ -195,10 +212,36 @@ def _build_config(register: str, max_output_tokens: int) -> Any:
 
 
 def _retriable_audio(exc: BaseException) -> bool:
-    """Errors worth retrying with backoff. The google-genai SDK
-    raises `google.genai.errors.APIError` (with `.code` for HTTP-ish
-    status). 429 / 5xx are retriable; auth / invalid-argument aren't.
-    Imported lazily so test environments without the SDK still work."""
+    """Errors worth retrying with backoff.
+
+    Two layers of recognition:
+
+    1. Transport-level exceptions raised BEFORE the google-genai SDK
+       wraps them — `httpx.HTTPError` covers timeouts / connect resets,
+       and the stdlib `TimeoutError` / `ConnectionError` catch any
+       layer that surfaces those directly. These are always retriable
+       and work even when the google-genai SDK isn't importable (test
+       envs).
+    2. SDK-wrapped `google.genai.errors.APIError` with a 429 or 5xx
+       `code` / `status_code`. Auth / invalid-argument (4xx other
+       than 429) are terminal.
+
+    Anything not matched is treated as non-retriable (same shape as
+    `decorate.py::_retriable`).
+    """
+    # Layer 1: transport / stdlib errors that don't depend on the SDK.
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+    try:
+        import httpx  # type: ignore[import-not-found]
+        if isinstance(exc, httpx.HTTPError):
+            return True
+    except ImportError:
+        pass
+
+    # Layer 2: SDK-wrapped API errors. Importing google.genai.errors
+    # may itself fail in stripped-down test envs; in that case we've
+    # already returned False from layer 1's miss.
     try:
         from google.genai import errors as genai_errors  # type: ignore[import-not-found]
     except ImportError:
