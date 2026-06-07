@@ -31,7 +31,8 @@ from typing import Any, Callable
 from .decorate import (
     DecorateResult,
     DecorateStatus,
-    _build_system_prompt as _build_text_system_prompt,
+    FISH_API_REFERENCE,
+    _REGISTER_PREAMBLE,
     _validate,
 )
 
@@ -41,7 +42,15 @@ from .decorate import (
 # saving — we're doing per-chunk prosody calls offline anyway, not
 # interactive. Override via PROSE_DECORATE_AUDIO_MODEL when iterating.
 AUDIO_DEFAULT_MODEL = "gemini-2.5-pro"
-DEFAULT_MAX_OUTPUT_TOKENS = 8192
+# Bumped from 8192 to 16384 — the audio-grounded path produces denser
+# output than the text-only path (one `[short pause]` per audible beat
+# in slow narrators), and the explicit closing-discipline section in
+# the system prompt drove additional output bytes for self-checks.
+# Empirical: v3 runs hit truncation on multiple chunks (Gemini returned
+# 132 words for a 744-word input, "empty response") at 8192. 16384
+# gives ~2x headroom while staying well under Gemini 2.5 Pro's
+# documented max (32k).
+DEFAULT_MAX_OUTPUT_TOKENS = 16384
 
 # Inline-data is the SDK's lightweight path: bytes go in the request
 # body, no File API upload step. Gemini's documented inline cap is
@@ -104,6 +113,21 @@ default cadence and produce listenable audio either way.
 The text chunk below is what the narrator says (verbatim — preserve
 every word). Output the same words, with bracket tags inserted at
 the audible-prosody-event positions.
+
+CRITICAL — DO NOT ADD WORDS THE NARRATOR SAYS THAT AREN'T IN THE
+INPUT TEXT. Specifically:
+- Filler words you can hear in the audio ("uh", "um", "I mean",
+  "you know", "like", "well", repeated words) but that the
+  transcript editor removed → KEEP THEM REMOVED. Do not insert
+  them. Mark the audible filler with `[short pause]` or
+  `[long pause]` if there's a real beat there, otherwise insert
+  no tag at all.
+- Restart fragments / false starts the narrator made but that
+  the transcript condenses → leave them condensed.
+
+The input transcript IS the source of truth for which words go
+in the output. The audio is the source of truth for prosody
+ONLY. If the two diverge on word content, the transcript wins.
 """
 
 
@@ -157,11 +181,23 @@ def make_client(api_key: str) -> Any:
 
 
 def _build_audio_system_prompt(register: str = "") -> str:
-    """Reuse the text-path system prompt (so tag vocabulary,
-    word-preservation rules, register preamble all stay in sync) and
-    append the audio-grounding addendum that tells the model to base
-    decisions on what it heard, not what it inferred from prose."""
-    return _build_text_system_prompt(register) + _AUDIO_GROUNDING_ADDENDUM
+    """Audio path system prompt: Fish API reference (tag vocab +
+    mechanics + universal rules) + the audio-grounding addendum.
+
+    Deliberately OMITS the text-only path's prose-inference guidance
+    (use-sparingly heuristic, map-from-headings/em-dashes/blockquotes,
+    rhetorical-emphasis pattern catalog, prose-cue example). The
+    addendum below replaces those with audio-grounded equivalents — a
+    pause goes where the narrator audibly paused, not where the prose
+    has a comma; emphasis goes where the narrator audibly stressed,
+    not on the rhetorical pivot word.
+    """
+    parts: list[str] = []
+    if register.strip():
+        parts.append(_REGISTER_PREAMBLE.format(register=register.strip()))
+    parts.append(FISH_API_REFERENCE)
+    parts.append(_AUDIO_GROUNDING_ADDENDUM)
+    return "".join(parts)
 
 
 def _build_contents(chunk_text: str, audio_bytes: bytes, audio_mime: str) -> list[Any]:
@@ -310,7 +346,16 @@ def decorate_chunk_with_audio(
             last_err = RuntimeError("empty response")
             continue
 
-        ok, reason = _validate(chunk_text, output, strict_tones=strict_tones)
+        # Audio path skips the 50%-of-input tag-character cap. That cap
+        # is tuned for the text-only path's "one tag per paragraph" norm;
+        # audio-grounded decoration legitimately produces a `[short pause]`
+        # at every audible beat in a slow narrator's speech and would
+        # blow the budget on legitimate output.
+        ok, reason = _validate(
+            chunk_text, output,
+            strict_tones=strict_tones,
+            enforce_tag_budget=False,
+        )
         if ok:
             return DecorateResult(text=output, status=DecorateStatus.DECORATED)
         last_err = RuntimeError(reason)
