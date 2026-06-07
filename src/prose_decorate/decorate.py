@@ -236,7 +236,13 @@ ANTHROPIC_API_VERSION = "2023-06-01"  # the messages API header value
 DEFAULT_MAX_TOKENS = 8192
 
 
-_PROMPT_TEMPLATE = """\
+# Fish Audio S2-Pro contract. Tag vocabulary, opener/closer mechanics,
+# universal output-format and word-preservation rules. Shared verbatim
+# between the text-only path and the audio-grounded path: both paths
+# emit tags S2-Pro will consume, so both need the same contract. Only
+# the *guidance for WHERE to place tags* differs (prose inference vs
+# audible delivery).
+FISH_API_REFERENCE = """\
 You are inserting prosody markers into prose for Fish Audio's S2-Pro
 text-to-speech model. S2-Pro accepts inline `[bracket]` tags written
 as free-form natural language; the model uses the bracketed phrase to
@@ -260,12 +266,19 @@ in brackets works (e.g. `[after a moment of hesitation]`). Prefer the
 short standard tags listed above unless the prose is doing something
 unusual.
 
-## Tonal voice tags vs transient cues (IMPORTANT)
+## Tonal voice tags — CLOSING DISCIPLINE (IMPORTANT — READ TWICE)
 
-S2-Pro tonal voice tags PERSIST forward — `[reading aloud]` keeps the
-quoted-voice rendering active for everything that follows until
-another tone tag overrides it. The ONLY tonal voice openers you may
-use are this CLOSED SET:
+S2-Pro tonal voice tags PERSIST forward in the rendered audio. An
+opener you write here keeps the voice register active for every word
+that follows until something explicitly resets it — and that
+includes words in the NEXT paragraph if you forget to close.
+
+Tags split into TWO classes. The class determines whether you must
+write a closer.
+
+### CLASS A — PERSISTENT openers. CLOSING REQUIRED.
+
+These eight phrases (and ONLY these eight) are persistent openers:
 
     [reading aloud]
     [thoughtfully]
@@ -276,33 +289,67 @@ use are this CLOSED SET:
     [reflectively]
     [matter-of-factly]
 
-Each one you open MUST be closed before chunk-end. Use exactly:
-    [back to narration]
+If you write one of these, you MUST write `[back to narration]` AFTER
+the last word of the tonally-shifted span — before the next paragraph
+break, never at end-of-chunk only. Stacked openers (one opener
+immediately replacing another with no closer between) are technically
+auto-closing in S2-Pro but you should not rely on that: write
+`[back to narration]` between them for clarity.
 
-The reset goes immediately AFTER the last word of the tonally-shifted
-span, BEFORE the next paragraph break.
+The phrase MUST be exactly `[back to narration]`. Variants like
+`[back to the narrator]`, `[normal voice]`, `[regular voice]`,
+`[narrator's voice]`, `[narrator returns]`, `[resuming narration]`,
+`[default voice]` are tolerated by the validator BUT the canonical
+form is `[back to narration]` — prefer that.
 
-If you need to express a TRANSIENT delivery cue (e.g. a single beat
-of hesitation, an aside), use natural-language brackets that DON'T
-match the closed set above — e.g. `[after a moment]`, `[briefly]`,
-`[as an aside]`. These are read as transient inflections, not
-persistent voice switches, and don't need a close-tag.
+### CLASS B — TRANSIENT cues. NO CLOSER. (Default for everything else.)
 
-## Rules
+Any other natural-language tag is read as a single-beat transient
+inflection — it shapes only the immediately-following words and
+does NOT need a close tag. Examples:
+
+    [after a moment]   [briefly]   [as an aside]
+    [with a slight chuckle]   [almost whispering]   [in Kirk's voice]
+    [amused]   [with a touch of disbelief]
+
+When in doubt, prefer Class B (transient). It's safer: forgetting to
+close a Class A opener produces audible voice-bleed into following
+content; an unnecessary Class A opener for a single line is almost
+always better expressed as Class B.
+
+### Self-check before submitting
+
+For EACH `[bracket]` tag you wrote, ask: is the inner text one of
+the eight Class A phrases above? If yes, confirm there is a
+`[back to narration]` (or tolerated variant) after the span. If
+no, no closer needed.
+
+## Universal rules
 
 1. PRESERVE EVERY WORD VERBATIM. INSERT tags, NEVER rewrite or delete
    prose. Don't paraphrase, don't fix typos, don't reflow lines.
-2. Use tags SPARINGLY. Most prose needs zero or one tag per paragraph.
-   The narrator's default cadence is already good — tags exist for the
-   moments where it ISN'T.
-3. DO NOT echo the `<ctx-prev-*>` block. It's read-only context for
+2. DO NOT echo the `<ctx-prev-*>` block. It's read-only context for
    tonal continuity, not part of the chunk you decorate. Output only
    the decorated CURRENT chunk.
-4. OUTPUT FORMAT: plain text with `[bracket]` tags inline. No markdown
+3. OUTPUT FORMAT: plain text with `[bracket]` tags inline. No markdown
    syntax (no `**bold**`, no `_italic_`, no `#`, no `>`). If you see
    bold/italic in the input, decide whether to mark it with a tag and
    then drop the syntax characters. Don't pass markdown through.
-5. Map cues from the input judiciously, not mechanically:
+"""
+
+
+# Text-only path guidance. Tells the model WHERE to place tags based on
+# prose cues alone (no audio reference). Appended to FISH_API_REFERENCE
+# for the Claude path; deliberately OMITTED from the audio path so
+# Gemini grounds decisions on audible delivery, not prose inference.
+_PROSE_INFERENCE_GUIDANCE = """\
+
+## Prose-inference guidance (text-only path)
+
+1. Use tags SPARINGLY. Most prose needs zero or one tag per paragraph.
+   The narrator's default cadence is already good — tags exist for the
+   moments where it ISN'T.
+2. Map cues from the input judiciously, not mechanically:
    - A heading often deserves a `[long pause]` afterwards but not always.
    - An em-dash can be a long pause OR a short aside-pause-then-resume.
      Read the sentence and decide. Don't tag every em-dash.
@@ -310,7 +357,7 @@ persistent voice switches, and don't need a close-tag.
      the FIRST sentence of the quote, not every line, AND close it with
      `[back to narration]` after the last sentence of the quote.
 
-6. **EMPHASIS ON RHETORICAL OPERATIVE WORDS — be more generous here
+3. **EMPHASIS ON RHETORICAL OPERATIVE WORDS — be more generous here
    than elsewhere.** A human narrator stresses certain words to make
    meaning legible. The default model cadence won't, so `[emphasis]`
    is doing real work. Look for these patterns; tag the operative span
@@ -353,7 +400,7 @@ persistent voice switches, and don't need a close-tag.
    sentence, ask: would a careful human narrator land harder on any
    word here? If yes, tag it.
 
-7. **Bold/italic markdown is NOT a signal**. The deterministic
+4. **Bold/italic markdown is NOT a signal**. The deterministic
    pre-process strips `**bold**` / `*italic*` before you see the text,
    because most markdown emphasis in articles marks technical terms or
    foreign words (not rhetorical stress). Decide emphasis from PROSE
@@ -378,8 +425,13 @@ of available sunbeams. [reading aloud] Older cats sleep more [short \
 pause] kittens, surprisingly, also sleep a lot. [back to narration] \
 That's why their owners install heated beds.
 
-Decorate the chunk below.
 """
+
+
+_TRAILER = "Decorate the chunk below.\n"
+
+
+_PROMPT_TEMPLATE = FISH_API_REFERENCE + _PROSE_INFERENCE_GUIDANCE + _TRAILER
 
 
 def prompt_template_hash() -> str:
@@ -466,6 +518,7 @@ def _validate(
     output_text: str,
     *,
     strict_tones: bool = False,
+    enforce_tag_budget: bool = True,
 ) -> tuple[bool, str]:
     """Apply safety guards from the v3 spec. Returns (ok, reason).
 
@@ -484,6 +537,14 @@ def _validate(
     (substring match against `_TONE_CLOSER_SUBSTRINGS`). Ships
     opt-in so the failure rate can be measured before flipping default
     (per advisor M3).
+
+    `enforce_tag_budget=False` skips the 50%-of-input tag-character cap.
+    The cap is tuned for prose-inferred (Claude) decoration where one
+    tag per paragraph is the explicit norm. The audio-grounded (Gemini)
+    path legitimately produces denser output — `[short pause]` at
+    every audible beat in a slow narrator's speech tracks reality, and
+    the addendum's "if delivery is flat, output no tags" already
+    self-limits without the char-budget guard.
     """
     if strict_tones:
         ok, reason = _check_tone_pairing(
@@ -503,14 +564,15 @@ def _validate(
         diff = _word_drift_summary(expected_words, actual_words)
         return False, f"prose drift at word level: {diff}"
 
-    # Tag-overhead budget: 50% of input chars or 200 chars, whichever is
-    # larger. The floor protects tiny inputs ("Hello world." is 12 chars
-    # but a single `[short pause]` is 13 — without the floor, every tag
-    # would trip the cap on a short chunk).
-    tag_chars = len(output_text) - len(strip_tags(output_text))
-    budget = max(0.5 * len(input_text), 200)
-    if tag_chars > budget:
-        return False, f"tag overhead too high ({tag_chars} > {int(budget)})"
+    if enforce_tag_budget:
+        # Tag-overhead budget: 50% of input chars or 200 chars, whichever is
+        # larger. The floor protects tiny inputs ("Hello world." is 12 chars
+        # but a single `[short pause]` is 13 — without the floor, every tag
+        # would trip the cap on a short chunk).
+        tag_chars = len(output_text) - len(strip_tags(output_text))
+        budget = max(0.5 * len(input_text), 200)
+        if tag_chars > budget:
+            return False, f"tag overhead too high ({tag_chars} > {int(budget)})"
 
     return True, ""
 

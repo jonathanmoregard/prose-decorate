@@ -7,6 +7,7 @@ import os
 import sys
 from pathlib import Path
 
+from . import audio as audio_mod
 from . import cache, decorate
 from .chunk import Chunk, chunk_markdown
 from .markdown_strip import strip_markdown
@@ -52,6 +53,15 @@ def _build_parser() -> argparse.ArgumentParser:
                         "tag choices toward a register. Example: "
                         "'calm, meandering, sleepy bedtime narration'. "
                         "Prepended to the system prompt; cached separately.")
+    p.add_argument("--audio", type=Path, default=None, metavar="FILE",
+                   help="Multimodal audio-grounded decoration. Reads the "
+                        "audio FILE (mp3/wav/ogg/flac) and routes each "
+                        "chunk to Gemini 2.5 Pro alongside the audio so "
+                        "tag decisions are based on what is HEARD, not "
+                        "inferred from prose. Requires GEMINI_API_KEY "
+                        "(or GEMINI_API_KEY_FILE) and the `google-genai` "
+                        "Python package. Cached separately from text-only "
+                        "runs (audio bytes hashed into the cache key).")
     return p
 
 
@@ -78,6 +88,30 @@ def _model() -> str:
         or decorate.DEFAULT_MODEL
 
 
+def _audio_model() -> str:
+    return os.environ.get(
+        "PROSE_DECORATE_AUDIO_MODEL", audio_mod.AUDIO_DEFAULT_MODEL
+    ).strip() or audio_mod.AUDIO_DEFAULT_MODEL
+
+
+# Used for the Gemini cache-key "api_version" slot. Audio runs have no
+# Anthropic-style date-pinned API header, so we stamp a synthetic value
+# that bumps when the audio path's behaviour changes — currently "v1".
+# Bump this string when the audio prompt or call shape changes in a
+# way that invalidates prior cache entries.
+_AUDIO_API_VERSION = "gemini-audio-v1"
+
+
+def _detect_audio_mime(path: Path) -> str:
+    """Resolve a file path to its Gemini MIME type via the centralized
+    map in `audio.AUDIO_MIME_BY_EXT` (includes `.opus` so podcast /
+    Telegram-voice content doesn't end up sent under `audio/mp3` and
+    rejected by Gemini)."""
+    return audio_mod.AUDIO_MIME_BY_EXT.get(
+        path.suffix.lower(), audio_mod.DEFAULT_AUDIO_MIME
+    )
+
+
 def _cache_root() -> str | None:
     return os.environ.get("PROSE_DECORATE_CACHE_DIR") or None
 
@@ -98,6 +132,145 @@ def _emit_debug(
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+
+def _process_audio(
+    chunks: list[Chunk],
+    *,
+    audio_path: Path,
+    no_cache: bool,
+    strict_tones: bool,
+    debug_dir: Path | None,
+    register: str = "",
+) -> tuple[list[str], int, int]:
+    """Gemini multimodal path. Reads the audio once and sends it
+    inline with every chunk.
+
+    For v0.1 we don't silence-split the audio per-chunk: we send the
+    whole clip with every chunk request and let the Gemini context
+    window absorb it. The soft inline cap is 18 MB (~18 minutes of
+    128 kbps MP3 — `INLINE_AUDIO_SOFT_CAP_BYTES` in audio.py); past
+    that, the silence-aligned chunker in `audio_chunk.py` lands as a
+    follow-up. The current cache key includes the WHOLE-file
+    `audio_hash`, which is correct for the single-shot path but will
+    need to become the per-segment hash when the chunker lands —
+    TODO marker at the audio_hash compute below.
+
+    Fast-fail order matters: we resolve the API key and construct the
+    SDK client BEFORE the (potentially large) `read_bytes()` so a
+    missing-key dev environment doesn't pay the IO + memory cost to
+    discover it can't run.
+    """
+    # Fast-fail order: cheap-to-check preconditions first.
+    try:
+        api_key = audio_mod.read_gemini_api_key()
+    except audio_mod.MissingGeminiAPIKey as e:
+        _log(f"warning: {e}; falling back to passthrough")
+        for c in chunks:
+            if debug_dir:
+                _emit_debug(
+                    debug_dir, c.index,
+                    input_text=c.text, output_text=c.text,
+                    status="passthrough", reason=str(e),
+                )
+        return ([c.text for c in chunks], 0, len(chunks))
+
+    try:
+        client = audio_mod.make_client(api_key)
+    except audio_mod.MissingGoogleGenAI as e:
+        _log(f"warning: {e}; falling back to passthrough")
+        for c in chunks:
+            if debug_dir:
+                _emit_debug(
+                    debug_dir, c.index,
+                    input_text=c.text, output_text=c.text,
+                    status="passthrough", reason=str(e),
+                )
+        return ([c.text for c in chunks], 0, len(chunks))
+
+    # Only now do we pay the IO + memory cost — preconditions are green.
+    # TODO(audio-chunker): when audio_chunk.py is wired in, replace
+    # this whole-file hash with a per-segment hash so the cache key
+    # partitions correctly across chunked audio runs. Today the
+    # single-shot path sends the same bytes with every chunk so the
+    # whole-file hash is correct; the silence-split path will need
+    # per-window hashes to stay collision-free.
+    audio_bytes = audio_path.read_bytes()
+    audio_hash = audio_mod.audio_hash_for(audio_bytes)
+    audio_mime = _detect_audio_mime(audio_path)
+
+    cdir = cache.chunks_dir(_cache_root())
+    # Reuse the text prompt-template hash so register / prompt edits to
+    # the SHARED prompt still invalidate the audio cache. The audio
+    # addendum lives in audio.py; we stamp _AUDIO_API_VERSION to bump
+    # the audio cache when the addendum itself changes.
+    prompt_hash = decorate.prompt_template_hash()
+    model = _audio_model()
+
+    pieces: list[str] = []
+    decorated = 0
+    passthrough = 0
+
+    soft_cap = audio_mod.INLINE_AUDIO_SOFT_CAP_BYTES
+    if len(audio_bytes) > soft_cap:
+        _log(
+            f"warning: audio is {len(audio_bytes):,} bytes (> {soft_cap:,} "
+            "inline-data soft cap). v0.1 still sends it whole; large "
+            "audio may fail Gemini's per-request limit. Follow-up: "
+            "silence-chunk via audio_chunk.partition_audio_at_silences."
+        )
+
+    for c in chunks:
+        cache_key = cache.key_for(
+            chunk_text=c.text,
+            prev_context=c.prev_context,
+            prompt_template_hash=prompt_hash,
+            model=model,
+            api_version=_AUDIO_API_VERSION,
+            register=register,
+            audio_hash=audio_hash,
+        )
+        if not no_cache:
+            hit = cache.get(cdir, cache_key)
+            if hit is not None:
+                _log(f"chunk {c.index + 1}/{len(chunks)}: cache hit "
+                     f"({len(c.text)} chars, audio)")
+                pieces.append(hit)
+                decorated += 1
+                if debug_dir:
+                    _emit_debug(
+                        debug_dir, c.index,
+                        input_text=c.text, output_text=hit,
+                        status="cached", reason="",
+                    )
+                continue
+
+        _log(f"chunk {c.index + 1}/{len(chunks)}: decorating with audio "
+             f"({len(c.text)} chars + {len(audio_bytes):,} audio bytes)")
+        result = audio_mod.decorate_chunk_with_audio(
+            client, c.text,
+            audio_bytes=audio_bytes,
+            audio_mime=audio_mime,
+            model=model,
+            strict_tones=strict_tones,
+            register=register,
+        )
+        if result.ok:
+            decorated += 1
+            if not no_cache:
+                cache.put(cdir, cache_key, result.text)
+        else:
+            passthrough += 1
+            _log(f"  passthrough: {result.reason}")
+        pieces.append(result.text)
+        if debug_dir:
+            _emit_debug(
+                debug_dir, c.index,
+                input_text=c.text, output_text=result.text,
+                status=result.status, reason=result.reason,
+            )
+
+    return (pieces, decorated, passthrough)
 
 
 def _process(
@@ -188,6 +361,21 @@ def _process(
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
+    # Validate --audio early. Pointing at a missing file is a user
+    # error, not a runtime crash — surface as EXIT_INVALID so the
+    # listen-tools pipeline can distinguish "you typo'd the path"
+    # from "the model went sideways and we passed through".
+    if args.audio is not None and not args.audio.is_file():
+        _log(f"error: --audio FILE not found: {args.audio}")
+        return EXIT_INVALID
+
+    # --no-llm and --audio are mutually exclusive; --audio implies a
+    # real LLM call so silently overriding either would surprise the
+    # user. Flag explicitly.
+    if args.audio is not None and args.no_llm:
+        _log("error: --audio and --no-llm are mutually exclusive")
+        return EXIT_INVALID
+
     raw = _read_input(args.input)
     stripped = strip_markdown(raw)
     if not stripped:
@@ -199,14 +387,24 @@ def main(argv: list[str] | None = None) -> int:
         _log("error: no chunks after splitting")
         return EXIT_EMPTY
 
-    pieces, decorated, passthrough = _process(
-        chunks,
-        no_cache=args.no_cache,
-        no_llm=args.no_llm,
-        strict_tones=args.strict_tones,
-        debug_dir=args.debug,
-        register=args.register,
-    )
+    if args.audio is not None:
+        pieces, decorated, passthrough = _process_audio(
+            chunks,
+            audio_path=args.audio,
+            no_cache=args.no_cache,
+            strict_tones=args.strict_tones,
+            debug_dir=args.debug,
+            register=args.register,
+        )
+    else:
+        pieces, decorated, passthrough = _process(
+            chunks,
+            no_cache=args.no_cache,
+            no_llm=args.no_llm,
+            strict_tones=args.strict_tones,
+            debug_dir=args.debug,
+            register=args.register,
+        )
 
     output = "\n\n".join(pieces)
     # Deterministic paragraph-pause enforcement runs on the final
